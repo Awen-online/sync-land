@@ -40,6 +40,11 @@ define( 'FML_NMKR_API_URL', 'https://studio-api.nmkr.io' ); // Use preprod URL f
 // JWT Authentication (required for external API access)
 define( 'JWT_AUTH_SECRET_KEY', 'your-secret-key' );
 define( 'JWT_AUTH_CORS_ENABLE', true );
+
+// Stripe Payment Configuration
+define( 'FML_STRIPE_SECRET_KEY', 'sk_test_...' ); // or sk_live_...
+define( 'FML_STRIPE_PUBLISHABLE_KEY', 'pk_test_...' );
+define( 'FML_STRIPE_WEBHOOK_SECRET', 'whsec_...' );
 ```
 
 ## API Endpoints
@@ -58,6 +63,11 @@ Business logic endpoints for licensing, uploads, and NFT minting:
 | `/wp-json/FML/v1/playlists/edit` | POST | Edit playlist |
 | `/wp-json/FML/v1/playlists/delete` | POST | Delete playlist |
 | `/wp-json/FML/v1/playlists/addsong` | POST | Add song to playlist |
+| `/wp-json/FML/v1/licenses/{id}/mint-nft` | POST | Mint license as NFT |
+| `/wp-json/FML/v1/licenses/{id}/nft-status` | GET | Get NFT status for license |
+| `/wp-json/FML/v1/licenses/{id}/payment-status` | GET | Get payment status |
+| `/wp-json/FML/v1/stripe/create-checkout` | POST | Create Stripe checkout session |
+| `/wp-json/FML/v1/stripe/webhook` | POST | Stripe webhook handler |
 
 ### Pods REST API (Alternative)
 

@@ -195,3 +195,4 @@ require get_stylesheet_directory().'/functions/gravityforms/licensing-creativeco
 
 require get_stylesheet_directory().'/functions/api/songs.php';
 require get_stylesheet_directory().'/functions/api/playlists.php';
+require get_stylesheet_directory().'/functions/api/stripe.php';
