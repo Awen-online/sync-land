@@ -1,0 +1,430 @@
+openapi: 3.0.3
+info:
+  title: Sync.Land API
+  description: |
+    REST API for Sync.Land music licensing platform.
+
+    ## Authentication
+    Most endpoints require WordPress nonce authentication via `_wpnonce` parameter.
+
+    ## Base URL
+    All endpoints use the `/wp-json/FML/v1/` prefix.
+  version: 1.0.0
+  contact:
+    name: Sync.Land
+    url: https://sync.land
+
+servers:
+  - url: https://sync.land/wp-json/FML/v1
+    description: Production
+  - url: https://sync.local/wp-json/FML/v1
+    description: Local Development
+
+tags:
+  - name: Songs
+    description: Song search and upload operations
+  - name: Licensing
+    description: License generation and management
+  - name: Playlists
+    description: User playlist management
+
+paths:
+  /song-search:
+    get:
+      tags:
+        - Songs
+      summary: Search songs
+      description: Search for songs by title
+      parameters:
+        - name: q
+          in: query
+          required: true
+          description: Search query string
+          schema:
+            type: string
+        - name: _wpnonce
+          in: query
+          required: true
+          description: WordPress nonce for authentication
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  songs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Song'
+        '401':
+          description: Authentication failed (nonce issue)
+
+  /song-upload:
+    post:
+      tags:
+        - Songs
+      summary: Upload a song file
+      description: Upload an audio file to S3 storage
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Audio file to upload
+      responses:
+        '200':
+          description: Successful upload
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  url:
+                    type: string
+                    description: URL of the uploaded file
+
+  /PDF_license_generator/:
+    post:
+      tags:
+        - Licensing
+      summary: Generate CC-BY license PDF
+      description: |
+        Generates a Creative Commons Attribution 4.0 license PDF,
+        uploads it to S3, and creates a license record in the database.
+      parameters:
+        - name: _wpnonce
+          in: query
+          required: true
+          description: WordPress nonce for authentication
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - songID
+                - licensor
+                - projectname
+              properties:
+                songID:
+                  type: integer
+                  description: ID of the song being licensed
+                licensor:
+                  type: string
+                  description: Name of the person accepting the license
+                projectname:
+                  type: string
+                  description: Name of the project using the song
+      responses:
+        '200':
+          description: License generated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  url:
+                    type: string
+                    description: URL of the generated license PDF
+
+  /playlists/:
+    get:
+      tags:
+        - Playlists
+      summary: Get user playlists
+      description: Retrieve all public playlists for a user
+      parameters:
+        - name: userID
+          in: query
+          required: true
+          description: WordPress user ID
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  playlists:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Playlist'
+
+  /playlists/html:
+    get:
+      tags:
+        - Playlists
+      summary: Get playlists as HTML
+      description: Returns HTML markup for adding a song to playlists
+      parameters:
+        - name: userID
+          in: query
+          required: true
+          schema:
+            type: integer
+        - name: songID
+          in: query
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: HTML response
+          content:
+            text/html:
+              schema:
+                type: string
+
+  /playlists/add:
+    post:
+      tags:
+        - Playlists
+      summary: Create new playlist
+      description: Create a new playlist for the current user
+      parameters:
+        - name: _wpnonce
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - playlist_name
+              properties:
+                playlist_name:
+                  type: string
+                  description: Name of the new playlist
+                isprivate:
+                  type: string
+                  enum: ['on', '']
+                  description: Set to 'on' for private playlist
+      responses:
+        '200':
+          description: Playlist created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  playlistID:
+                    type: integer
+
+  /playlists/addsong:
+    post:
+      tags:
+        - Playlists
+      summary: Add song to playlist
+      description: Add a song to one or more playlists
+      parameters:
+        - name: _wpnonce
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - songID
+                - playlistID
+              properties:
+                songID:
+                  type: integer
+                  description: ID of the song to add
+                playlistID:
+                  type: string
+                  description: Comma-separated list of playlist IDs
+      responses:
+        '200':
+          description: Song added to playlist(s)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+  /playlists/edit:
+    post:
+      tags:
+        - Playlists
+      summary: Edit playlist
+      description: Update playlist name, privacy, or songs
+      parameters:
+        - name: _wpnonce
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - playlistID
+              properties:
+                playlistID:
+                  type: integer
+                post_title:
+                  type: string
+                  description: New playlist name
+                isprivate:
+                  type: string
+                  enum: ['on', '']
+                songs:
+                  type: array
+                  items:
+                    type: integer
+                  description: Array of song IDs
+      responses:
+        '200':
+          description: Playlist updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+                  playlistID:
+                    type: integer
+
+  /playlists/delete:
+    post:
+      tags:
+        - Playlists
+      summary: Delete playlist
+      description: Move playlist to trash
+      parameters:
+        - name: _wpnonce
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              required:
+                - playlistID
+              properties:
+                playlistID:
+                  type: integer
+      responses:
+        '200':
+          description: Playlist deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  message:
+                    type: string
+
+components:
+  schemas:
+    Song:
+      type: object
+      properties:
+        id:
+          type: integer
+        post_title:
+          type: string
+        artist:
+          $ref: '#/components/schemas/Artist'
+
+    Artist:
+      type: object
+      properties:
+        ID:
+          type: integer
+        post_title:
+          type: string
+
+    Playlist:
+      type: object
+      properties:
+        id:
+          type: integer
+        post_title:
+          type: string
+        post_status:
+          type: string
+          enum: ['publish', 'private']
+        songs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Song'
+
+    License:
+      type: object
+      properties:
+        id:
+          type: integer
+        user:
+          type: integer
+        song:
+          type: integer
+        datetime:
+          type: string
+          format: date-time
+        license_url:
+          type: string
+        licensor:
+          type: string
+        project:
+          type: string
