@@ -1,0 +1,175 @@
+/*
+Click nbfs://nbhost/SystemFileSystem/Templates/Licenses/license-default.txt to change this license
+Click nbfs://nbhost/SystemFileSystem/Templates/Other/CascadeStyleSheet.css to edit this template
+*/
+/* 
+    Created on : Oct 5, 2023, 11:33:35 AM
+    Author     : Ian
+*/
+
+@import url('https://fonts.googleapis.com/css?family=Exo:400,700');
+
+
+
+.user-registration-Button{
+    margin-top:10px;
+}
+
+/*//VALIDATION SCRIPT*/
+.error{
+    color:red !important;
+    padding: 2px;
+}
+
+/*///LOADING SCREEN*/
+#loading-screen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.7); /* Opaque black background */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999; /* Ensure it's on top of all other elements */
+}
+
+#loader {
+    border: 5px solid #f3f3f3; /* Light gray border for the loader */
+    border-top: 5px solid #3498db; /* Blue border for the loader */
+    border-radius: 50%;
+    width: 50px;
+    height: 50px;
+    animation: spin 2s linear infinite; /* Rotate the loader */
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+
+
+/*//NAVIGATION*/
+.hidden-menu {
+    display: none;
+    position: absolute;
+    top: 60px; /* Adjust as needed */
+    right: 0; /* Adjust as needed */
+    background: #fff; /* Background color */
+    box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2); /* Box shadow for a nice effect */
+    padding: 5px 15px 5px 15px; /* Adjust as needed */
+    z-index: 2;
+    background: #FECD45BF;
+}
+
+.hidden-menu li {
+    display: block !important;
+    height: 35px;
+    font-size: 25px;
+}
+
+.hidden-menu a {
+    font-weight: 800;
+}
+
+.profile-picture:hover .hidden-menu {
+    display: block;
+}
+
+.user-registration-MyAccount-content{
+    width:100% !important;
+}
+
+.ticket-icon {
+    position: relative;
+    display: inline-block;
+    vertical-align:super;
+    margin-right: 5px;
+    margin-top: -5px;
+}
+
+.ticket-icon a {
+    color: black !important;
+}
+
+.ticket-icon i {
+    font-size: 32px; /* Adjust the font size as needed to make the icon larger */
+}
+
+.ticket-icon .badge {
+    position: absolute;
+    bottom: 0;
+    right: 0;
+    background-color: red;
+    color: white;
+    /*padding: 3px 6px;  Adjust the padding as needed for the badge size */
+    border-radius: 50%; /* Makes the badge circular */
+    font-size: 12px; /* Adjust the font size for the badge text */
+    height: 15px;
+    width: 15px;
+    text-align:center;
+}
+
+.hidden{
+    display:none;
+}
+
+.app-card-list {
+  width: 100%;
+  height: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-around;
+}
+
+.card {
+  width: calc((100%/3.2));
+  border-radius: 5px;
+  box-shadow: 0px 0px 20px 2px rgba(0, 0, 0, 0.1);
+  border-radius: 5px;
+  height: 100%;
+  position: relative;
+  margin-top: 20px;
+}
+
+.card_img{
+  width: 100%;
+  height: 200px;
+  object-fit: cover;
+  -o-object-fit: cover;
+  border-radius: 5px 5px 0 0;    
+}
+
+.designer-link {
+  display:inline-block;
+  padding-top:40px;
+}
+
+.social-button{
+    margin-right: 10px;
+}
+
+#ticket-history-table td{
+    padding: 2px !important;
+}
+#ticket-history-table th{
+    padding: 5px !important;
+}
+
+/* homepage background three.js */
+#threejs-background {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -1; /* Places it behind all content */
+}
+
+#threejs-background canvas {
+    width: 100% !important;
+    height: 100% !important;
+}
