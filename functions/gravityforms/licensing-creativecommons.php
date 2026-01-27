@@ -17,27 +17,47 @@ function handle_pdf_license_generation($entry, $form) {
     $descriptionOfUsage = rgar($entry, '10'); // Description of Usage
     $legalName = rgar($entry, '14'); // Legal Name
 
+    // NFT minting fields (add these to Gravity Form 14)
+    // Field ID 15: Mint as NFT (checkbox)
+    // Field ID 16: Wallet Address (text)
+    $mintAsNFT = rgar($entry, '15'); // Mint as NFT checkbox
+    $walletAddress = rgar($entry, '16'); // Cardano wallet address
+
     // Debug: Log the data being sent to PDF_license_generator
-    GFCommon::log_debug("Debug Gravity Forms Submission: Song ID: " . $songID . ", Licensor: " . $licensor . ", Project Name: " . $projectname . ", Date: " . $date . ", Description: " . $descriptionOfUsage . ", Legal Name: " . $legalName);
+    GFCommon::log_debug("Debug Gravity Forms Submission: Song ID: " . $songID . ", Licensor: " . $licensor . ", Project Name: " . $projectname . ", Date: " . $date . ", Description: " . $descriptionOfUsage . ", Legal Name: " . $legalName . ", Mint NFT: " . $mintAsNFT . ", Wallet: " . $walletAddress);
 
     // Call the PDF_license_generator function directly with parameters
-    $result = PDF_license_generator($songID, $licensor, $projectname, $date, $descriptionOfUsage, $legalName);
+    $result = PDF_license_generator($songID, $licensor, $projectname, $date, $descriptionOfUsage, $legalName, '', $mintAsNFT, $walletAddress);
 
     // Debug: Log the result of the PDF generation
     //GFCommon::log_debug("Debug PDF License Generator Result: " . print_r($result, true));
 
     // Handle the output from PDF_license_generator
     if (is_array($result) && isset($result['success']) && $result['success']) {
-        // Success, you can add logic here to show success message or redirect
-        echo "<script>
-            jQuery('#api_response').append('<div><p>Your license has been generated.</p><p><button><a href=\''+'" . $result['url'] . "'+'\'><i class=\'fa fa-solid fa-download\'></i> Download </a></button><button><a href=\'/account/my-licenses\'><i class=\'fa fa-solid fa-files\'></i> View License History </a></button></p></div>');
-        </script>";
+        $response_html = '<div><p>Your license has been generated.</p>';
+        $response_html .= '<p><button><a href="' . esc_url($result['url']) . '"><i class="fa fa-solid fa-download"></i> Download </a></button>';
+        $response_html .= '<button><a href="/account/my-licenses"><i class="fa fa-solid fa-files"></i> View License History </a></button></p>';
+
+        // Show NFT status if minting was requested
+        if (!empty($result['nft_status'])) {
+            if ($result['nft_status'] === 'minted') {
+                $response_html .= '<p class="nft-success"><i class="fa fa-check-circle"></i> NFT minted successfully!</p>';
+            } elseif ($result['nft_status'] === 'pending') {
+                $response_html .= '<p class="nft-pending"><i class="fa fa-clock"></i> NFT minting in progress...</p>';
+            } elseif ($result['nft_status'] === 'failed') {
+                $response_html .= '<p class="nft-error"><i class="fa fa-exclamation-circle"></i> NFT minting failed. You can retry from your license history.</p>';
+            }
+        }
+
+        $response_html .= '</div>';
+
+        echo "<script>jQuery('#api_response').append('" . addslashes($response_html) . "');</script>";
     } else {
         // Debug: Log any errors from the PDF license generator
         if (isset($result['error'])) {
             GFCommon::log_debug("Debug PDF License Generator Error: " . $result['error']);
         }
-        echo "<script>alert('License generation failed: " . (isset($result['error']) ? $result['error'] : 'Unknown error') . "');</script>";
+        echo "<script>alert('License generation failed: " . esc_js(isset($result['error']) ? $result['error'] : 'Unknown error') . "');</script>";
     }
 }
 
@@ -55,11 +75,14 @@ function handle_pdf_license_generation($entry, $form) {
 //
 //function to generate a pdf, upload it to AWS, update pods with info
 //
-function PDF_license_generator($songID, $licensor, $projectname, $date, $descriptionOfUsage = '', $legalName = '', $signatureImage = '') {
+function PDF_license_generator($songID, $licensor, $projectname, $date, $descriptionOfUsage = '', $legalName = '', $signatureImage = '', $mintAsNFT = false, $walletAddress = '') {
     // Validate required fields
     if (empty($songID) || empty($licensor) || empty($projectname)) {
         return array('success' => false, 'error' => 'Required fields (songID, licensor, projectname) are missing');
     }
+
+    // Normalize mintAsNFT (could be checkbox value like 'Yes', '1', 'on', etc.)
+    $shouldMintNFT = !empty($mintAsNFT) && !in_array(strtolower($mintAsNFT), ['no', '0', 'false', '']);
 
     // Load dependencies
     require_once $_SERVER['DOCUMENT_ROOT'] . '/vendor/autoload.php';
@@ -217,6 +240,9 @@ function PDF_license_generator($songID, $licensor, $projectname, $date, $descrip
     }
 
     // Insert license data into Pods
+    $nft_status = 'none';
+    $new_license_id = null;
+
     if ($success) {
         $pod = pods('license');
         $data = array(
@@ -228,7 +254,11 @@ function PDF_license_generator($songID, $licensor, $projectname, $date, $descrip
             'project'            => $projectname,
             'description_of_usage' => $descriptionOfUsage,
             'legal_name'         => $legalName,
-            'signature'          => $signatureImage
+            'signature'          => $signatureImage,
+            // NFT fields
+            'mint_as_nft'        => $shouldMintNFT ? 1 : 0,
+            'wallet_address'     => sanitize_text_field($walletAddress),
+            'nft_status'         => $shouldMintNFT ? 'pending' : 'none'
         );
 
         $new_license_id = $pod->add($data);
@@ -237,6 +267,17 @@ function PDF_license_generator($songID, $licensor, $projectname, $date, $descrip
                 'ID'          => $new_license_id,
                 'post_status' => 'publish'
             ));
+
+            // Trigger NFT minting if requested
+            if ($shouldMintNFT && function_exists('fml_mint_license_nft')) {
+                $nft_result = fml_mint_license_nft($new_license_id, $walletAddress);
+                $nft_status = $nft_result['success'] ? 'minted' : 'failed';
+
+                // Log NFT minting result
+                if (class_exists('GFCommon')) {
+                    GFCommon::log_debug("NFT Minting Result for License {$new_license_id}: " . print_r($nft_result, true));
+                }
+            }
         } else {
             $success = false;
             $error = 'Failed to insert license record';
@@ -246,9 +287,19 @@ function PDF_license_generator($songID, $licensor, $projectname, $date, $descrip
     // Clean up temp file
     unlink($tmpPath);
 
-    // Return result
-    return $success ? array('success' => true, 'message' => 'License generated successfully', 'url' => $url)
-                    : array('success' => false, 'error' => $error);
+    // Return result with NFT status
+    if ($success) {
+        return array(
+            'success' => true,
+            'message' => 'License generated successfully',
+            'url' => $url,
+            'license_id' => $new_license_id,
+            'nft_status' => $nft_status,
+            'nft_requested' => $shouldMintNFT
+        );
+    } else {
+        return array('success' => false, 'error' => $error);
+    }
 }
     
     // return $output;
