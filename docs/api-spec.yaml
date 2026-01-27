@@ -5,10 +5,37 @@ info:
     REST API for Sync.Land music licensing platform.
 
     ## Authentication
-    Most endpoints require WordPress nonce authentication via `_wpnonce` parameter.
 
-    ## Base URL
-    All endpoints use the `/wp-json/FML/v1/` prefix.
+    ### Current: WordPress Nonce
+    Most endpoints currently require WordPress nonce authentication via `_wpnonce` parameter.
+    This works for same-origin requests but is not suitable for external applications.
+
+    ### Planned: JWT Authentication
+    For external API access, install and configure the **JWT Authentication for WP REST API** plugin:
+    - Plugin: https://wordpress.org/plugins/jwt-authentication-for-wp-rest-api/
+    - Provides Bearer token authentication for external apps
+    - Required for Phase 4 (External Test Application)
+
+    ## Base URLs
+
+    ### Custom Endpoints (FML/v1)
+    All custom endpoints use the `/wp-json/FML/v1/` prefix.
+
+    ### Pods REST API (Alternative)
+    WordPress Pods plugin provides a built-in REST API that can be used as an alternative
+    or supplement to custom endpoints:
+    - **Songs**: `/wp-json/pods/v1/song/`
+    - **Artists**: `/wp-json/pods/v1/artist/`
+    - **Albums**: `/wp-json/pods/v1/album/`
+    - **Licenses**: `/wp-json/pods/v1/license/`
+    - **Playlists**: `/wp-json/pods/v1/playlist/`
+
+    Pods REST API documentation: https://developer.wordpress.org/rest-api/
+    Enable in Pods Admin > Settings > REST API
+
+    ## API Strategy
+    - Use **Pods REST API** for standard CRUD operations on content types
+    - Use **FML/v1 custom endpoints** for business logic (license generation, S3 uploads, NFT minting)
   version: 1.0.0
   contact:
     name: Sync.Land
