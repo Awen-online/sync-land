@@ -159,11 +159,14 @@ function get_songs(){
     
     if($nonce){
         if(isset($_GET['q'])){
-            $q = $_GET['q'];
+            global $wpdb;
+            $q = sanitize_text_field($_GET['q']);
+            // Use wpdb->esc_like to prevent SQL injection in LIKE queries
+            $escaped_q = $wpdb->esc_like($q);
             // Here's how to use find()
             $params = array(
                 'limit' => 5,
-                'where'=>"t.post_title LIKE '%$q%'"
+                'where' => $wpdb->prepare("t.post_title LIKE %s", '%' . $escaped_q . '%')
             );
             $songs = pods("song", $params);
             $songObj = array($songs->export());

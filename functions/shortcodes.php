@@ -709,7 +709,7 @@ function social_media_conditional_display($artistID) {
     $soundcloudURL = do_shortcode('[pods name="artist" id="' . $artistID . '"]{@soundcloud}[/pods]');
     $spotifyURL = do_shortcode('[pods name="artist" id="' . $artistID . '"]{@spotify}[/pods]');
     $twitchURL = do_shortcode('[pods name="artist" id="' . $artistID . '"]{@twitch}[/pods]');
-    $twitterURL = do_shortcode('[pods name="artist" id="' . $artistID . '"]{@twitter}[/pods]');
+    $xURL = do_shortcode('[pods name="artist" id="' . $artistID . '"]{@twitter}[/pods]');  // Assuming your Pods field is still called @twitter
     $websiteURL = do_shortcode('[pods name="artist" id="' . $artistID . '"]{@website}[/pods]');
     $youtubeURL = do_shortcode('[pods name="artist" id="' . $artistID . '"]{@youtube}[/pods]');
 
@@ -755,9 +755,9 @@ function social_media_conditional_display($artistID) {
         $html .= '<a class="elementor-icon elementor-social-icon elementor-social-icon-twitch" href="' . $sanitizedTwitchURL . '" title="Artist Twitch Page" target="_blank" style="border-radius: 10%;"><span class="elementor-screen-only">Twitch</span><i class="fab fa-twitch"></i></a>';
     }
 
-    if (!empty($twitterURL)) {
-        $sanitizedTwitterURL = sanitize_url($twitterURL);
-        $html .= '<a class="elementor-icon elementor-social-icon elementor-social-icon-twitter" href="' . $sanitizedTwitterURL . '" title="Artist Twitter Page" target="_blank" style="border-radius: 10%;"><span class="elementor-screen-only">Twitter</span><i class="fab fa-twitter"></i></a>';
+    if (!empty($xURL)) {
+        $sanitizedXURL = sanitize_url($xURL);
+        $html .= '<a class="elementor-icon elementor-social-icon elementor-social-icon-x" href="' . $sanitizedXURL . '" title="Artist X Page" target="_blank" style="border-radius: 10%;"><span class="elementor-screen-only">X</span><i class="fab fa-x-twitter"></i></a>';
     }
 
     if (!empty($youtubeURL)) {
