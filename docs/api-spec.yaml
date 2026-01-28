@@ -6,37 +6,31 @@ info:
 
     ## Authentication
 
-    ### Current: WordPress Nonce
-    Most endpoints currently require WordPress nonce authentication via `_wpnonce` parameter.
-    This works for same-origin requests but is not suitable for external applications.
+    ### API Key (Recommended for External Apps)
+    Include your API key in the `X-API-Key` header:
+    ```
+    X-API-Key: fml_your_api_key_here
+    ```
 
-    ### Planned: JWT Authentication
-    For external API access, install and configure the **JWT Authentication for WP REST API** plugin:
+    ### WordPress Nonce (Internal)
+    For same-origin requests, use the `_wpnonce` parameter or `X-WP-Nonce` header.
+
+    ### JWT Authentication (Alternative)
+    Install the **JWT Authentication for WP REST API** plugin for Bearer token auth:
     - Plugin: https://wordpress.org/plugins/jwt-authentication-for-wp-rest-api/
-    - Provides Bearer token authentication for external apps
-    - Required for Phase 4 (External Test Application)
 
-    ## Base URLs
+    ## Rate Limiting
+    - Default: 100 requests per hour
+    - Headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`
 
-    ### Custom Endpoints (FML/v1)
-    All custom endpoints use the `/wp-json/FML/v1/` prefix.
-
-    ### Pods REST API (Alternative)
-    WordPress Pods plugin provides a built-in REST API that can be used as an alternative
-    or supplement to custom endpoints:
+    ## Pods REST API (Alternative)
+    WordPress Pods plugin provides a built-in REST API for standard CRUD:
     - **Songs**: `/wp-json/pods/v1/song/`
     - **Artists**: `/wp-json/pods/v1/artist/`
     - **Albums**: `/wp-json/pods/v1/album/`
     - **Licenses**: `/wp-json/pods/v1/license/`
     - **Playlists**: `/wp-json/pods/v1/playlist/`
-
-    Pods REST API documentation: https://developer.wordpress.org/rest-api/
-    Enable in Pods Admin > Settings > REST API
-
-    ## API Strategy
-    - Use **Pods REST API** for standard CRUD operations on content types
-    - Use **FML/v1 custom endpoints** for business logic (license generation, S3 uploads, NFT minting)
-  version: 1.0.0
+  version: 1.1.0
   contact:
     name: Sync.Land
     url: https://sync.land
@@ -44,37 +38,76 @@ info:
 servers:
   - url: https://sync.land/wp-json/FML/v1
     description: Production
-  - url: https://sync.local/wp-json/FML/v1
+  - url: http://sync.local/wp-json/FML/v1
     description: Local Development
 
 tags:
   - name: Songs
-    description: Song search and upload operations
+    description: Song search and management
+  - name: Artists
+    description: Artist information
+  - name: Albums
+    description: Album information
   - name: Licensing
     description: License generation and management
+  - name: NFT
+    description: NFT minting for licenses
+  - name: Payments
+    description: Stripe payment integration
   - name: Playlists
     description: User playlist management
+  - name: System
+    description: API status and management
+
+security:
+  - ApiKeyAuth: []
+  - WordPressNonce: []
 
 paths:
-  /song-search:
+  # ============================================================================
+  # SONGS
+  # ============================================================================
+  /songs:
     get:
       tags:
         - Songs
       summary: Search songs
-      description: Search for songs by title
+      description: Search for songs with various filters
+      security:
+        - {}  # Public endpoint
       parameters:
         - name: q
           in: query
-          required: true
-          description: Search query string
+          description: Search query for song title
           schema:
             type: string
-        - name: _wpnonce
+        - name: genre
           in: query
-          required: true
-          description: WordPress nonce for authentication
           schema:
             type: string
+        - name: mood
+          in: query
+          schema:
+            type: string
+        - name: bpm_min
+          in: query
+          schema:
+            type: integer
+        - name: bpm_max
+          in: query
+          schema:
+            type: integer
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
+            maximum: 100
       responses:
         '200':
           description: Successful response
@@ -85,35 +118,369 @@ paths:
                 properties:
                   success:
                     type: boolean
-                  message:
-                    type: string
                   songs:
                     type: array
                     items:
                       $ref: '#/components/schemas/Song'
-        '401':
-          description: Authentication failed (nonce issue)
+                  pagination:
+                    $ref: '#/components/schemas/Pagination'
+        '429':
+          $ref: '#/components/responses/RateLimited'
 
-  /song-upload:
-    post:
+  /songs/{id}:
+    get:
       tags:
         - Songs
-      summary: Upload a song file
-      description: Upload an audio file to S3 storage
+      summary: Get song by ID
+      security:
+        - {}  # Public endpoint
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  song:
+                    $ref: '#/components/schemas/Song'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /songs/{id}/licenses:
+    get:
+      tags:
+        - Songs
+        - Licensing
+      summary: Get licenses for a song
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  song_id:
+                    type: integer
+                  licenses:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/License'
+
+  # ============================================================================
+  # ARTISTS
+  # ============================================================================
+  /artists/{id}:
+    get:
+      tags:
+        - Artists
+      summary: Get artist by ID
+      security:
+        - {}  # Public endpoint
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  artist:
+                    $ref: '#/components/schemas/Artist'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /artists/{id}/songs:
+    get:
+      tags:
+        - Artists
+        - Songs
+      summary: Get songs by artist
+      security:
+        - {}  # Public endpoint
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  artist:
+                    $ref: '#/components/schemas/Artist'
+                  songs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Song'
+
+  # ============================================================================
+  # ALBUMS
+  # ============================================================================
+  /albums/{id}:
+    get:
+      tags:
+        - Albums
+      summary: Get album by ID
+      security:
+        - {}  # Public endpoint
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  album:
+                    $ref: '#/components/schemas/Album'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /albums/{id}/songs:
+    get:
+      tags:
+        - Albums
+        - Songs
+      summary: Get songs in album
+      security:
+        - {}  # Public endpoint
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  album:
+                    $ref: '#/components/schemas/Album'
+                  songs:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Song'
+
+  # ============================================================================
+  # LICENSES
+  # ============================================================================
+  /licenses/{id}:
+    get:
+      tags:
+        - Licensing
+      summary: Get license by ID
+      description: Requires authentication. Users can only view their own licenses.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  license:
+                    $ref: '#/components/schemas/License'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /licenses/request:
+    post:
+      tags:
+        - Licensing
+      summary: Request a CC-BY license
+      description: Create a new Creative Commons Attribution 4.0 license with optional NFT minting
       requestBody:
         required: true
         content:
-          multipart/form-data:
+          application/json:
             schema:
               type: object
+              required:
+                - song_id
+                - licensee_name
+                - project_name
               properties:
-                file:
+                song_id:
+                  type: integer
+                licensee_name:
                   type: string
-                  format: binary
-                  description: Audio file to upload
+                project_name:
+                  type: string
+                mint_nft:
+                  type: boolean
+                  default: false
+                wallet_address:
+                  type: string
+                  description: Required if mint_nft is true
+      responses:
+        '201':
+          description: License created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  license_id:
+                    type: integer
+                  license_url:
+                    type: string
+                  message:
+                    type: string
+                  nft:
+                    type: object
+                    properties:
+                      status:
+                        type: string
+                        enum: [pending, failed]
+                      message:
+                        type: string
+
+  /licenses/my:
+    get:
+      tags:
+        - Licensing
+      summary: Get current user's licenses
+      description: Requires WordPress session authentication
       responses:
         '200':
-          description: Successful upload
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  licenses:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/License'
+
+  /licenses/{id}/payment-status:
+    get:
+      tags:
+        - Licensing
+        - Payments
+      summary: Get license payment status
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  license_id:
+                    type: integer
+                  license_type:
+                    type: string
+                    enum: [cc_by, non_exclusive]
+                  payment_status:
+                    type: string
+                    enum: [pending, completed, failed, not_applicable]
+                  payment_amount:
+                    type: integer
+                  payment_currency:
+                    type: string
+
+  # ============================================================================
+  # NFT
+  # ============================================================================
+  /licenses/{id}/mint-nft:
+    post:
+      tags:
+        - NFT
+        - Licensing
+      summary: Mint license as NFT
+      description: Mint a CC-BY license as an NFT on Cardano blockchain
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - wallet_address
+              properties:
+                wallet_address:
+                  type: string
+                  description: Cardano wallet address (addr1... or addr_test1...)
+      responses:
+        '200':
+          description: NFT minting initiated
           content:
             application/json:
               schema:
@@ -123,23 +490,255 @@ paths:
                     type: boolean
                   message:
                     type: string
-                  url:
+                  nft_status:
                     type: string
-                    description: URL of the uploaded file
+                  transaction_hash:
+                    type: string
+
+  /licenses/{id}/nft-status:
+    get:
+      tags:
+        - NFT
+        - Licensing
+      summary: Get NFT status for license
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  license_id:
+                    type: integer
+                  nft_status:
+                    type: string
+                    enum: [pending, minted, failed, none]
+                  nft_asset_id:
+                    type: string
+                  nft_transaction_hash:
+                    type: string
+                  nft_minted_at:
+                    type: string
+
+  # ============================================================================
+  # PAYMENTS (STRIPE)
+  # ============================================================================
+  /stripe/create-checkout:
+    post:
+      tags:
+        - Payments
+      summary: Create Stripe checkout session
+      description: |
+        Create a Stripe Checkout session for purchasing a non-exclusive sync license.
+        Requires WordPress session authentication.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - song_id
+              properties:
+                song_id:
+                  type: integer
+                licensee_name:
+                  type: string
+                project_name:
+                  type: string
+                usage_description:
+                  type: string
+      responses:
+        '200':
+          description: Checkout session created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  checkout_url:
+                    type: string
+                    description: Redirect user to this URL
+                  session_id:
+                    type: string
+
+  /stripe/webhook:
+    post:
+      tags:
+        - Payments
+      summary: Stripe webhook handler
+      description: |
+        Handles Stripe webhook events. Called by Stripe, not external applications.
+        Requires valid Stripe signature.
+      security: []
+      responses:
+        '200':
+          description: Webhook processed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  received:
+                    type: boolean
+
+  # ============================================================================
+  # API KEYS (ADMIN)
+  # ============================================================================
+  /api-keys:
+    get:
+      tags:
+        - System
+      summary: List API keys
+      description: Admin only
+      responses:
+        '200':
+          description: List of API keys
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        key_id:
+                          type: string
+                        app_name:
+                          type: string
+                        created_at:
+                          type: string
+                        last_used:
+                          type: string
+                        request_count:
+                          type: integer
+    post:
+      tags:
+        - System
+      summary: Create API key
+      description: Admin only
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - app_name
+              properties:
+                app_name:
+                  type: string
+      responses:
+        '201':
+          description: API key created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                  key_id:
+                    type: string
+                  api_key:
+                    type: string
+                    description: Store securely - shown only once
+
+  /api-keys/{key_id}:
+    delete:
+      tags:
+        - System
+      summary: Revoke API key
+      description: Admin only
+      parameters:
+        - name: key_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: API key revoked
+
+  # ============================================================================
+  # STATUS
+  # ============================================================================
+  /status:
+    get:
+      tags:
+        - System
+      summary: API health check
+      security: []
+      responses:
+        '200':
+          description: API status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                  version:
+                    type: string
+                  timestamp:
+                    type: string
+                  auth:
+                    type: object
+                  rate_limit:
+                    type: object
+
+  # ============================================================================
+  # LEGACY ENDPOINTS (Internal Use)
+  # ============================================================================
+  /song-search:
+    get:
+      tags:
+        - Songs
+      summary: Search songs (legacy)
+      deprecated: true
+      description: Use /songs instead
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: _wpnonce
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
 
   /PDF_license_generator/:
     post:
       tags:
         - Licensing
-      summary: Generate CC-BY license PDF
-      description: |
-        Generates a Creative Commons Attribution 4.0 license PDF,
-        uploads it to S3, and creates a license record in the database.
+      summary: Generate CC-BY license PDF (legacy)
+      deprecated: true
+      description: Use /licenses/request instead
       parameters:
         - name: _wpnonce
           in: query
           required: true
-          description: WordPress nonce for authentication
           schema:
             type: string
       requestBody:
@@ -155,90 +754,34 @@ paths:
               properties:
                 songID:
                   type: integer
-                  description: ID of the song being licensed
                 licensor:
                   type: string
-                  description: Name of the person accepting the license
                 projectname:
                   type: string
-                  description: Name of the project using the song
       responses:
         '200':
-          description: License generated successfully
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  message:
-                    type: string
-                  url:
-                    type: string
-                    description: URL of the generated license PDF
+          description: License generated
 
   /playlists/:
     get:
       tags:
         - Playlists
       summary: Get user playlists
-      description: Retrieve all public playlists for a user
       parameters:
         - name: userID
-          in: query
-          required: true
-          description: WordPress user ID
-          schema:
-            type: integer
-      responses:
-        '200':
-          description: Successful response
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  message:
-                    type: string
-                  playlists:
-                    type: array
-                    items:
-                      $ref: '#/components/schemas/Playlist'
-
-  /playlists/html:
-    get:
-      tags:
-        - Playlists
-      summary: Get playlists as HTML
-      description: Returns HTML markup for adding a song to playlists
-      parameters:
-        - name: userID
-          in: query
-          required: true
-          schema:
-            type: integer
-        - name: songID
           in: query
           required: true
           schema:
             type: integer
       responses:
         '200':
-          description: HTML response
-          content:
-            text/html:
-              schema:
-                type: string
+          description: Successful response
 
   /playlists/add:
     post:
       tags:
         - Playlists
       summary: Create new playlist
-      description: Create a new playlist for the current user
       parameters:
         - name: _wpnonce
           in: query
@@ -256,202 +799,221 @@ paths:
               properties:
                 playlist_name:
                   type: string
-                  description: Name of the new playlist
                 isprivate:
                   type: string
-                  enum: ['on', '']
-                  description: Set to 'on' for private playlist
       responses:
         '200':
           description: Playlist created
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  message:
-                    type: string
-                  playlistID:
-                    type: integer
-
-  /playlists/addsong:
-    post:
-      tags:
-        - Playlists
-      summary: Add song to playlist
-      description: Add a song to one or more playlists
-      parameters:
-        - name: _wpnonce
-          in: query
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              type: object
-              required:
-                - songID
-                - playlistID
-              properties:
-                songID:
-                  type: integer
-                  description: ID of the song to add
-                playlistID:
-                  type: string
-                  description: Comma-separated list of playlist IDs
-      responses:
-        '200':
-          description: Song added to playlist(s)
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  message:
-                    type: string
-
-  /playlists/edit:
-    post:
-      tags:
-        - Playlists
-      summary: Edit playlist
-      description: Update playlist name, privacy, or songs
-      parameters:
-        - name: _wpnonce
-          in: query
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              type: object
-              required:
-                - playlistID
-              properties:
-                playlistID:
-                  type: integer
-                post_title:
-                  type: string
-                  description: New playlist name
-                isprivate:
-                  type: string
-                  enum: ['on', '']
-                songs:
-                  type: array
-                  items:
-                    type: integer
-                  description: Array of song IDs
-      responses:
-        '200':
-          description: Playlist updated
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  message:
-                    type: string
-                  playlistID:
-                    type: integer
-
-  /playlists/delete:
-    post:
-      tags:
-        - Playlists
-      summary: Delete playlist
-      description: Move playlist to trash
-      parameters:
-        - name: _wpnonce
-          in: query
-          required: true
-          schema:
-            type: string
-      requestBody:
-        required: true
-        content:
-          application/x-www-form-urlencoded:
-            schema:
-              type: object
-              required:
-                - playlistID
-              properties:
-                playlistID:
-                  type: integer
-      responses:
-        '200':
-          description: Playlist deleted
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  message:
-                    type: string
 
 components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: API key for external applications
+    WordPressNonce:
+      type: apiKey
+      in: query
+      name: _wpnonce
+      description: WordPress nonce for same-origin requests
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token (requires JWT plugin)
+
   schemas:
     Song:
       type: object
       properties:
         id:
           type: integer
-        post_title:
+        title:
           type: string
         artist:
-          $ref: '#/components/schemas/Artist'
+          type: object
+          properties:
+            id:
+              type: integer
+            name:
+              type: string
+        album:
+          type: object
+          nullable: true
+          properties:
+            id:
+              type: integer
+            name:
+              type: string
+        audio_url:
+          type: string
+        duration:
+          type: string
+        bpm:
+          type: integer
+        key:
+          type: string
+        genre:
+          type: string
+        mood:
+          type: string
+        permalink:
+          type: string
+        created_at:
+          type: string
+          format: date-time
 
     Artist:
       type: object
       properties:
-        ID:
+        id:
           type: integer
-        post_title:
+        name:
           type: string
+        bio:
+          type: string
+        website:
+          type: string
+        permalink:
+          type: string
+        created_at:
+          type: string
+          format: date-time
 
-    Playlist:
+    Album:
       type: object
       properties:
         id:
           type: integer
-        post_title:
+        title:
           type: string
-        post_status:
+        artist:
+          type: object
+          properties:
+            id:
+              type: integer
+            name:
+              type: string
+        release_date:
           type: string
-          enum: ['publish', 'private']
-        songs:
-          type: array
-          items:
-            $ref: '#/components/schemas/Song'
+        cover_art:
+          type: string
+        permalink:
+          type: string
+        created_at:
+          type: string
+          format: date-time
 
     License:
       type: object
       properties:
         id:
           type: integer
-        user:
-          type: integer
         song:
-          type: integer
-        datetime:
+          type: object
+          properties:
+            id:
+              type: integer
+            title:
+              type: string
+        license_type:
           type: string
-          format: date-time
-        license_url:
-          type: string
-        licensor:
+          enum: [cc_by, non_exclusive]
+        licensee:
           type: string
         project:
           type: string
+        license_url:
+          type: string
+        nft:
+          type: object
+          properties:
+            status:
+              type: string
+            asset_id:
+              type: string
+            transaction_hash:
+              type: string
+        payment:
+          type: object
+          properties:
+            status:
+              type: string
+            amount:
+              type: integer
+            currency:
+              type: string
+        created_at:
+          type: string
+          format: date-time
+
+    Pagination:
+      type: object
+      properties:
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+        total_pages:
+          type: integer
+
+    Error:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+
+  responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            success: false
+            error:
+              code: not_found
+              message: Resource not found
+
+    Forbidden:
+      description: Not authorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            success: false
+            error:
+              code: forbidden
+              message: Not authorized to access this resource
+
+    RateLimited:
+      description: Rate limit exceeded
+      headers:
+        X-RateLimit-Limit:
+          schema:
+            type: integer
+        X-RateLimit-Remaining:
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            success: false
+            error:
+              code: rate_limit_exceeded
+              message: Rate limit exceeded. Please try again later.

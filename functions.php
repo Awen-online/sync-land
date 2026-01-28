@@ -193,6 +193,8 @@ require get_stylesheet_directory().'/functions/elementor.php';
 require get_stylesheet_directory().'/functions/nmkr.php';
 require get_stylesheet_directory().'/functions/gravityforms/licensing-creativecommons.php';
 
+require get_stylesheet_directory().'/functions/api/security.php';
 require get_stylesheet_directory().'/functions/api/songs.php';
 require get_stylesheet_directory().'/functions/api/playlists.php';
 require get_stylesheet_directory().'/functions/api/stripe.php';
+require get_stylesheet_directory().'/functions/api/external.php';
