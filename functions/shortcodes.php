@@ -60,18 +60,32 @@ function sort_album_list_songs( $albumID ){
             color:white !important;
         }
     </style>
+
+    <!-- Play All Button -->
+    <div style="margin-bottom: 15px;">
+        <button class="play-all-album"
+                data-album-id="<?php echo $albumID; ?>"
+                title="Play entire album">
+            <i class="fas fa-play"></i> Play All
+        </button>
+    </div>
+
     <table>
-        
+
     <?php
 
     $songList = do_shortcode('[pods name="song" where="album.ID='.$albumID.'" orderby="LENGTH(track_number.meta_value),track_number.meta_value ASC"]{@ID};;{@track_number};;{@post_title};;{@audio_url};;{@permalink}*[/pods]'); // get song list, delineate with comma
     $songsArray1 = explode("*", $songList); // create array by exploding the songlist by the comma delineation, array_pop to remove final blank array value
     $songsArray = array_filter($songsArray1); // removing "null" or blank array entries using "array_filter"
     
-    // find artist name via pods magic tags 
+    // find artist name via pods magic tags
     $artistName = do_shortcode('[pods]{@artist.post_title}[/pods]');
     $artistPermalink = do_shortcode('[pods]{@artist.permalink}[/pods]');
-    
+
+    // find album name and permalink
+    $albumName = do_shortcode('[pods]{@post_title}[/pods]');
+    $albumPermalink = do_shortcode('[pods]{@permalink}[/pods]');
+
     // find cover art URL name via pods magic tags
     $coverArtURL = do_shortcode('[pods]{@post_thumbnail_url}[/pods]');
         
@@ -102,11 +116,16 @@ function sort_album_list_songs( $albumID ){
             <td style="width: 80px; height: 80px; padding: 0;">
                 <?php //echo $songPod->template("Song Embed Code"); ?>
                 <button type="button"
-                        class="song-play" 
+                        class="song-play"
                         data-audiosrc="<?php echo $songPlayURL; ?>"
                         data-songname="<?php echo $songName; ?>"
                         data-artistname="<?php echo $artistName; ?>"
+                        data-albumname="<?php echo $albumName; ?>"
                         data-artsrc="<?php echo $coverArtURL; ?>"
+                        data-songid="<?php echo $songID; ?>"
+                        data-permalink="<?php echo $songPermalink; ?>"
+                        data-artistpermalink="<?php echo $artistPermalink; ?>"
+                        data-albumpermalink="<?php echo $albumPermalink; ?>"
                         style="width: 80px; height: 80px; background-image: url(<?php echo $coverArtURL; ?>); background-repeat: no-repeat; background-size: contain; border-color: #e0e0e0;" title="Play">
                     <i class="fas fa-play fa-lg" style="color: #FC0202;"></i>
                 </button>
@@ -233,21 +252,33 @@ function getAlbumPhoto($artistID){
 //THIS is a list display
 add_shortcode('playlists_songs_display', 'playlists_songs_display');
 function playlists_songs_display( $args ){
-    
+
     global $post;
     $current_id = $post->ID;
-    
+
 //    $playlistID = $args["playlistID"];
     $playlistPod = pods("playlist",$current_id)->export();
     if(!empty($playlistPod)){
+        // Play All button for playlist
+        ?>
+        <div style="margin-bottom: 15px;">
+            <button class="play-all-playlist"
+                    data-playlist-id="<?php echo $current_id; ?>"
+                    title="Play entire playlist">
+                <i class="fas fa-play"></i> Play All
+            </button>
+        </div>
+        <div class="song-list-container">
+        <?php
         foreach($playlistPod["songs"] as $song){
            $songID = $song["ID"];
-           single_song_display($songID); 
+           single_song_display($songID);
         }
+        ?>
+        </div>
+        <?php
     }
-    
-   
- 
+
 }
 
 //TAXONOMY DISPLAY
@@ -401,23 +432,27 @@ function single_song_display( $songID ){
         }
     </style>
     
-<div >
-    <table >
+<div>
+    <table>
         <tr>
             <td style="width: 80px; height: 80px; padding: 0;">
                 <button type="button"
-                        class="song-play" 
+                        class="song-play"
                         data-audiosrc="<?php echo $songPlayURL; ?>"
                         data-songname="<?php echo $songName; ?>"
                         data-artistname="<?php echo $artistName; ?>"
                         data-albumname="<?php echo $albumName; ?>"
                         data-artsrc="<?php echo $coverArtURL; ?>"
+                        data-songid="<?php echo $songID; ?>"
+                        data-permalink="<?php echo $songPermalink; ?>"
+                        data-artistpermalink="<?php echo $artistPermalink; ?>"
+                        data-albumpermalink="<?php echo $albumPermalink; ?>"
                         style="width: 80px; height: 80px; background-image: url(<?php echo $coverArtURL; ?>); background-repeat: no-repeat; background-size: contain; border-color: #e0e0e0;" title="Play">
                     <i class="fas fa-play fa-lg" style="color: #FC0202;"></i>
                 </button>
             </td>
             <td style=" width: auto; vertical-align: middle; word-wrap: normal; line-height: 1.2em; padding: 0% 1%;">
-                
+
                 <div class="track_information_title"  style="font-weight: bold;">
                     <a href="<?php echo $songPermalink; ?>">
                         <?php echo $songName; ?>
@@ -849,11 +884,16 @@ function home_page_play_button( $songID ){
     
     <div>
         <button type="btn"
-                class="song-play" 
+                class="song-play"
                 data-audiosrc="<?php echo $songPlayURL; ?>"
                 data-songname="<?php echo $songName; ?>"
                 data-artistname="<?php echo $artistName; ?>"
+                data-albumname="<?php echo $albumName; ?>"
                 data-artsrc="<?php echo $coverArtURL; ?>"
+                data-songid="<?php echo $songID; ?>"
+                data-permalink="<?php echo $songPermalink; ?>"
+                data-artistpermalink="<?php echo $artistPermalink; ?>"
+                data-albumpermalink="<?php echo $albumPermalink; ?>"
                 title="Play"
                 style="font-weight: bold; width: 100%; background-color: #61CE70; border: none; padding: 2%; border-radius: 10px;">
             <i class="fa fa-play-circle-o"></i>
