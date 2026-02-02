@@ -99,6 +99,7 @@ add_action('wp_enqueue_scripts', function() {
     //
     wp_enqueue_script('custom-script', get_stylesheet_directory_uri() . '/assets/js/main.js', array('jquery'), $style_version);
     wp_enqueue_script('FML-script', get_stylesheet_directory_uri() . '/assets/js/FML.js', array('jquery'), $style_version);
+    wp_enqueue_script('pjax-navigation', get_stylesheet_directory_uri() . '/assets/js/pjax-navigation.js', array('jquery'), $style_version, true);
     // wp_enqueue_script('song-upload-custom', get_stylesheet_directory_uri() . '/assets/js/song-upload.js', array('jquery', 'song-upload-script'), '1.0', true);
     wp_enqueue_script('jquery-sortable', get_stylesheet_directory_uri() . '/assets/js/jquery-sortable-min.js', array('jquery'), $style_version);
     wp_enqueue_script('tables', get_stylesheet_directory_uri() . '/assets/js/tables.js', array('jquery'), $style_version);
