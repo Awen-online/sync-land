@@ -1,0 +1,198 @@
+/* Badges */
+.badge {
+    display: inline-block;
+    padding: 0.25em 0.4em;
+    font-size: 75%;
+    font-weight: 700;
+    line-height: 1;
+    text-align: center;
+    white-space: nowrap;
+    vertical-align: baseline;
+    border-radius: 0.25rem;
+  }
+  
+  .badge:empty {
+    display: none;
+  }
+  
+  .btn .badge {
+    position: relative;
+    top: -1px;
+  }
+  
+  .badge-pill {
+    padding-right: 0.6em;
+    padding-left: 0.6em;
+    border-radius: 10rem;
+  }
+  
+  .badge-primary {
+    color: #fff;
+    background-color: #007bff;
+  }
+  
+  .badge-primary[href]:hover, .badge-primary[href]:focus {
+    color: #fff;
+    text-decoration: none;
+    background-color: #0062cc;
+  }
+  
+  .badge-secondary {
+    color: #fff;
+    background-color: #6c757d;
+  }
+  
+  .badge-secondary[href]:hover, .badge-secondary[href]:focus {
+    color: #fff;
+    text-decoration: none;
+    background-color: #545b62;
+  }
+  
+  .badge-success {
+    color: #fff;
+    background-color: #28a745;
+  }
+  
+  .badge-success[href]:hover, .badge-success[href]:focus {
+    color: #fff;
+    text-decoration: none;
+    background-color: #1e7e34;
+  }
+  
+  .badge-info {
+    color: #fff;
+    background-color: #17a2b8;
+  }
+  
+  .badge-info[href]:hover, .badge-info[href]:focus {
+    color: #fff;
+    text-decoration: none;
+    background-color: #117a8b;
+  }
+  
+  .badge-warning {
+    color: #212529;
+    background-color: #ffc107;
+  }
+  
+  .badge-warning[href]:hover, .badge-warning[href]:focus {
+    color: #212529;
+    text-decoration: none;
+    background-color: #d39e00;
+  }
+  
+  .badge-danger {
+    color: #fff;
+    background-color: #dc3545;
+  }
+  
+  .badge-danger[href]:hover, .badge-danger[href]:focus {
+    color: #fff;
+    text-decoration: none;
+    background-color: #bd2130;
+  }
+  
+  .badge-light {
+    color: #212529;
+    background-color: #f8f9fa;
+  }
+  
+  .badge-light[href]:hover, .badge-light[href]:focus {
+    color: #212529;
+    text-decoration: none;
+    background-color: #dae0e5;
+  }
+  
+  .badge-dark {
+    color: #fff;
+    background-color: #343a40;
+  }
+  
+  .badge-dark[href]:hover, .badge-dark[href]:focus {
+    color: #fff;
+    text-decoration: none;
+    background-color: #1d2124;
+  }
+  
+  /* Labels (for Bootstrap 4.1.3 - Note: Labels are replaced by badges in Bootstrap 5) */
+  .label {
+    display: inline;
+    padding: .2em .6em .3em;
+    font-size: 75%;
+    font-weight: bold;
+    line-height: 1;
+    color: #fff;
+    text-align: center;
+    white-space: nowrap;
+    vertical-align: baseline;
+    border-radius: .25em;
+  }
+  
+  .label:empty {
+    display: none;
+  }
+  
+  .btn .label {
+    position: relative;
+    top: -1px;
+  }
+  
+  .label-default {
+    background-color: #777;
+  }
+  
+  .label-default[href]:hover, .label-default[href]:focus {
+    background-color: #5e5e5e;
+  }
+  
+  .label-primary {
+    background-color: #337ab7;
+  }
+  
+  .label-primary[href]:hover, .label-primary[href]:focus {
+    background-color: #286090;
+  }
+  
+  .label-success {
+    background-color: #5cb85c;
+  }
+  
+  .label-success[href]:hover, .label-success[href]:focus {
+    background-color: #449d44;
+  }
+  
+  .label-info {
+    background-color: #5bc0de;
+  }
+  
+  .label-info[href]:hover, .label-info[href]:focus {
+    background-color: #31b0d5;
+  }
+  
+  .label-warning {
+    background-color: #f0ad4e;
+  }
+  
+  .label-warning[href]:hover, .label-warning[href]:focus {
+    background-color: #ec971f;
+  }
+  
+  .label-danger {
+    background-color: #d9534f;
+  }
+  
+  .label-danger[href]:hover, .label-danger[href]:focus {
+    background-color: #c9302c;
+  }
+
+
+/* FOR THE SONG DISPLAYS */
+  .label a{
+      color: white;
+  }
+  .track_information_title{
+      color:white !important;
+  }
+  .track_information_artist{
+      color:white !important;
+  }

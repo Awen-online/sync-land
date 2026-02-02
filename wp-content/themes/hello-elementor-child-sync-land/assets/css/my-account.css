@@ -1,0 +1,30 @@
+  .user-registration-MyAccount-content {
+    text-align: left !important;
+}
+.full-width-button {
+  width: 100%;
+}
+
+/* //PLAYLIST POPUP */
+
+.mfp-align-center .mfp-content {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 100%; /* Ensures it spans viewport height */
+}
+
+.mfp-align-center .mfp-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh; /* Full viewport height */
+}
+
+.mfp-bg {
+  background: rgba(0, 0, 0, 0.7); /* Darker overlay for contrast */
+}
+
+.mfp-wrap {
+  overflow-y: auto; /* Allows scrolling if content overflows */
+}
