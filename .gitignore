@@ -12,5 +12,6 @@
 !wp-content/plugins/fml-music-player/
 !wp-content/plugins/fml-music-player/**
 
-# Track this gitignore
+# Track root files
 !.gitignore
+!README.md
