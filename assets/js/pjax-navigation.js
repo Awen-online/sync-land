@@ -28,7 +28,8 @@
         '#threejs-background',
         '#loading-screen',
         '.example-container',
-        '#white-player'
+        '#white-player',
+        '.fml-search-overlay'
     ];
 
     // Tag names to always skip (not content)
@@ -190,6 +191,16 @@
                 return;
             }
 
+            // Lock Amplitude.init during PJAX swap to prevent any stray script
+            // from resetting the player queue and stopping playback
+            var _amplitudeInitBackup = null;
+            if (typeof Amplitude !== 'undefined' && Amplitude.init) {
+                _amplitudeInitBackup = Amplitude.init;
+                Amplitude.init = function() {
+                    console.log('PJAX: blocked Amplitude.init() during navigation');
+                };
+            }
+
             // 1) Remove current content nodes from the live DOM
             var currentContentNodes = getContentNodes(document.body);
             currentContentNodes.forEach(function(node) {
@@ -235,6 +246,14 @@
 
             // 9) Re-initialize Elementor and other plugins
             self.reinitScripts();
+
+            // 10) Restore Amplitude.init after a delay to catch any async/setTimeout calls
+            setTimeout(function() {
+                if (_amplitudeInitBackup) {
+                    Amplitude.init = _amplitudeInitBackup;
+                    _amplitudeInitBackup = null;
+                }
+            }, 500);
         },
 
         updateHeadStyles: function(newDoc) {
@@ -267,10 +286,13 @@
 
                 var content = scripts[i].textContent;
                 if (content && content.trim()) {
-                    // Skip Amplitude re-init scripts
+                    // Skip scripts that are already loaded and would cause redeclaration errors
                     if (content.indexOf('Amplitude.init') !== -1) continue;
+                    if (content.indexOf('lazyloadRunObserver') !== -1) continue;
+                    if (content.indexOf('rocket-') !== -1 && content.indexOf('Observer') !== -1) continue;
                     try {
-                        $.globalEval(content);
+                        // Wrap in a function scope so let/const don't collide with globals
+                        $.globalEval('(function(){' + content + '})();');
                     } catch(e) {
                         console.log('PJAX script exec error:', e);
                     }
@@ -284,7 +306,7 @@
                 try {
                     // Re-run element handlers on the new content
                     if (window.elementorFrontend.elementsHandler) {
-                        window.elementorFrontend.elementsHandler.runReadyTrigger(document);
+                        window.elementorFrontend.elementsHandler.runReadyTrigger(document.documentElement);
                     }
 
                     // Re-init Elementor's sticky functionality on the footer
@@ -313,9 +335,15 @@
             $(document).trigger('pjax:complete');
             document.dispatchEvent(new Event('pjax:load'));
 
-            // Re-bind AmplitudeJS elements on new content
+            // Re-bind AmplitudeJS elements and refresh player display
             if (typeof Amplitude !== 'undefined') {
                 try { Amplitude.bindNewElements(); } catch(e) {}
+            }
+            if (typeof window.updatePlayerMeta === 'function') {
+                try { window.updatePlayerMeta(); } catch(e) {}
+            }
+            if (typeof window.updateQueueDisplay === 'function') {
+                try { window.updateQueueDisplay(); } catch(e) {}
             }
 
             // Re-initialize DataTables

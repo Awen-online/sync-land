@@ -74,40 +74,43 @@ function sort_album_list_songs( $albumID ){
 
     <?php
 
-    $songList = do_shortcode('[pods name="song" where="album.ID='.$albumID.'" orderby="LENGTH(track_number.meta_value),track_number.meta_value ASC"]{@ID};;{@track_number};;{@post_title};;{@audio_url};;{@permalink}*[/pods]'); // get song list, delineate with comma
-    $songsArray1 = explode("*", $songList); // create array by exploding the songlist by the comma delineation, array_pop to remove final blank array value
-    $songsArray = array_filter($songsArray1); // removing "null" or blank array entries using "array_filter"
-    
-    // find artist name via pods magic tags
-    $artistName = do_shortcode('[pods]{@artist.post_title}[/pods]');
-    $artistPermalink = do_shortcode('[pods]{@artist.permalink}[/pods]');
+    // Get album metadata via Pods (single item by ID — no WHERE clause needed)
+    $albumPod = pods('album', $albumID);
+    $albumName = $albumPod->field('post_title');
+    $albumPermalink = get_permalink($albumID);
+    $coverArtURL = get_the_post_thumbnail_url($albumID, 'medium') ?: '';
 
-    // find album name and permalink
-    $albumName = do_shortcode('[pods]{@post_title}[/pods]');
-    $albumPermalink = do_shortcode('[pods]{@permalink}[/pods]');
+    $artistName = '';
+    $artistPermalink = '';
+    $artistData = $albumPod->field('artist');
+    if (!empty($artistData)) {
+        $artistID = is_array($artistData) ? $artistData['ID'] : $artistData;
+        $artistPod = pods('artist', $artistID);
+        if ($artistPod && $artistPod->exists()) {
+            $artistName = $artistPod->field('post_title');
+            $artistPermalink = get_permalink($artistID);
+        }
+    }
 
-    // find cover art URL name via pods magic tags
-    $coverArtURL = do_shortcode('[pods]{@post_thumbnail_url}[/pods]');
-        
-    foreach( $songsArray as $key => $song ){
-        
-        // Establishing key variables from earlier magic tag generated array
-        $songInfoArray = explode(";;",$song);
-        
-//        print_r($song);
-//       print_r($songInfoArray);
-        
-        $songID = $songInfoArray[0];
-        $trackNumber = $songInfoArray[1];
-        $songName = addslashes($songInfoArray[2]);
-        $songPlayURL = htmlentities($songInfoArray[3]);
-        $songPermalink = $songInfoArray[4];
+    // Get songs for this album using Pods PHP API (not shortcode — avoids SQL fragment restrictions)
+    $songPods = pods('song', [
+        'where'   => 'album.ID = ' . intval($albumID),
+        'orderby' => 'track_number.meta_value+0 ASC',
+        'limit'   => -1,
+    ]);
 
-        // getting individual taxonomy values with "get_the_term_list()" wordpress function
-        $songGenres = get_the_term_list($songID,"genre","","*");
-        $songGenreArray = explode("*", $songGenres);
-        $songMoods = get_the_term_list($songID,"mood","","*");
-        $songMoodArray = explode("*", $songMoods);
+    while ($songPods->fetch()) {
+        $songID = $songPods->id();
+        $trackNumber = $songPods->field('track_number');
+        $songName = $songPods->field('post_title');
+        $songPlayURL = $songPods->field('audio_url');
+        $songPermalink = get_permalink($songID);
+
+        // getting individual taxonomy values
+        $songGenres = get_the_term_list($songID, "genre", "", "*");
+        $songGenreArray = $songGenres ? explode("*", $songGenres) : [];
+        $songMoods = get_the_term_list($songID, "mood", "", "*");
+        $songMoodArray = $songMoods ? explode("*", $songMoods) : [];
         
         ?>      
 
@@ -169,10 +172,10 @@ function sort_album_list_songs( $albumID ){
             </td>
         </tr>
         
-    <?php 
+    <?php
     }
-    ?>  
-        
+    ?>
+
     </table>
 
     <?php
