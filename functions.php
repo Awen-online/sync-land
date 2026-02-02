@@ -93,7 +93,8 @@ add_action('wp_enqueue_scripts', function() {
     wp_enqueue_style('boostrap-badge-style',  get_stylesheet_directory_uri() . '/assets/css/bootstrap-badges.css', array(), $style_version);
     wp_enqueue_style('datatables-style', get_stylesheet_directory_uri() . '/assets/css/dataTables.css', array(), $style_version);
     wp_enqueue_style('magnific-popup-css', 'https://cdn.jsdelivr.net/npm/magnific-popup@1.1.0/dist/magnific-popup.css', array(), $style_version);
-    
+    wp_enqueue_style('fml-search-style', get_stylesheet_directory_uri() . '/assets/css/search.css', array(), $style_version);
+
     //
     //ADD JS
     //
@@ -132,6 +133,7 @@ add_action('wp_enqueue_scripts', function() {
     wp_enqueue_script('three-buffer-geometry-utils', 'https://cdn.jsdelivr.net/npm/three/examples/js/utils/BufferGeometryUtils.js', array('three-js'), null, true);
     wp_enqueue_script('threejs-background',get_stylesheet_directory_uri() . '/assets/js/background-particles.js', array('three-js'), $style_version, true);
     wp_enqueue_script('inner-planet', get_stylesheet_directory_uri() . '/assets/js/inner-planet.js', array('three-js'), $style_version, true); // Enqueue the new script
+    wp_enqueue_script('fml-search', get_stylesheet_directory_uri() . '/assets/js/search.js', array(), $style_version, true);
 
 
     // Add type="module" to the script tag
@@ -199,3 +201,4 @@ require get_stylesheet_directory().'/functions/api/songs.php';
 require get_stylesheet_directory().'/functions/api/playlists.php';
 require get_stylesheet_directory().'/functions/api/stripe.php';
 require get_stylesheet_directory().'/functions/api/external.php';
+require get_stylesheet_directory().'/functions/api/search.php';

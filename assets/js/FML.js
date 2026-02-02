@@ -88,45 +88,7 @@ $(document).ready(function(){
 
 
 
-  //WHEN A USER PLAYS A SONG
-  $(".song-play").click(function(){
-      
-      var audioFileSrc = $(this).data("audiosrc");
-      var songTitle = $(this).data("songname");
-      var artistName = $(this).data("artistname");
-      var albumName = $(this).data("albumname");
-      var artistLink = '';
-      var category = "ALL CATEGORIES";
-      var albumArtSrc = $(this).data("artsrc");
-      var buyLink = '';
-
-      var songObj = {
-          "name": songTitle,
-          "artist": artistName,
-          "album": albumName,
-          "url": audioFileSrc,
-          "cover_art_url": albumArtSrc,
-          "made_up_key": "I'm made up completely"
-      };
-      
-  //    var activePlaylist = Amplitude.getActivePlaylist();
-  //    Amplitude.addSongToPlaylist( songObj, activePlaylist );
-      
-  //    var newIndex = Amplitude.addSong( songObj );
-  //    appendToSongDisplay( songObj, newIndex );
-  //        Amplitude.bindNewElements();
-      
-      Amplitude.playNow( songObj );
-      Amplitude.bindNewElements();
-
-  //    var songHTML = '<ul><li id="'+songTitle+'" class="xtitle">'+songTitle+'</li><li class="xcategory">'+category+'</li><li class="xauthor">'+artistName+'</li><li class="xauthorlink">'+artistLink+'</li><li class="xauthorlinktarget">_blank</li><li class="ximage">'+albumArtSrc+'</li><li class="xbuy">'+buyLink+'</li><li class="xsources_mp3">'+audioFileSrc+'</li></ul>'
-      
-      //TODO: Enhance by checking by Pods ID
-      //if(!$(".xaudioplaylist").find("#"+songTitle)){
-  //        $(".xaudioplaylist").append(songHTML);
-      //}
-  //    $.audio7_html5.changeMp3(audioFileSrc,songTitle,artistName,albumArtSrc);
-  });
+  // Song play is now handled by music-player.js via delegated event (FMLPlaySongAtTop)
 
       //
       //playlist script
