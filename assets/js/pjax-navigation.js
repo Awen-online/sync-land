@@ -258,8 +258,13 @@
 
         executeNewScripts: function(newDoc) {
             // Execute inline scripts from the new page's body
+            // Only run scripts that are actual JavaScript (no type, or type="text/javascript")
             var scripts = newDoc.body.querySelectorAll('script:not([src])');
             for (var i = 0; i < scripts.length; i++) {
+                var scriptType = (scripts[i].getAttribute('type') || '').toLowerCase();
+                // Skip non-JS scripts (JSON-LD, application/json, etc.)
+                if (scriptType && scriptType !== 'text/javascript') continue;
+
                 var content = scripts[i].textContent;
                 if (content && content.trim()) {
                     // Skip Amplitude re-init scripts
