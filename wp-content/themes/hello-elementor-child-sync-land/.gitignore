@@ -1,0 +1,58 @@
+# Sync.Land Theme - Git Ignore File
+
+# Environment and credentials
+.env
+.env.*
+*.env
+wp-config.php
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Dependencies
+node_modules/
+vendor/
+bower_components/
+
+# Build artifacts
+dist/
+build/
+*.log
+
+# WordPress uploads (should not be in theme repo)
+uploads/
+
+# Compiled assets (if using build tools)
+*.min.css.map
+*.min.js.map
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Debug files
+debug.log
+error.log
+
+# Package manager locks (optional - uncomment if needed)
+# package-lock.json
+# composer.lock
+
+# AWS SDK (large vendor directory - consider removing if using composer)
+# php/aws/
