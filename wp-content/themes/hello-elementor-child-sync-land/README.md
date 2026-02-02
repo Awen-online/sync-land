@@ -1,6 +1,22 @@
-# Sync.Land Theme
+# Sync.Land
 
-A WordPress child theme for Sync.Land - a music licensing platform with CC-BY licensing and blockchain (Cardano/NMKR) NFT verification.
+A WordPress-based music licensing platform with CC-BY licensing, blockchain (Cardano/NMKR) NFT verification, Stripe payments, and a persistent music player.
+
+## Repository Structure
+
+This repo lives at the WordPress site root and tracks two components:
+
+```
+public/                          # WordPress site root (git root)
+├── .gitignore                   # Whitelists only theme + plugin dirs
+├── wp-content/
+│   ├── themes/
+│   │   └── hello-elementor-child-sync-land/   # Theme
+│   └── plugins/
+│       └── fml-music-player/                  # Music player plugin
+```
+
+Everything else (WordPress core, other plugins, uploads) is gitignored.
 
 ## Requirements
 
@@ -15,10 +31,11 @@ A WordPress child theme for Sync.Land - a music licensing platform with CC-BY li
 ## Installation
 
 1. Install and activate the Hello Elementor parent theme
-2. Upload this theme to `wp-content/themes/`
-3. Configure API credentials in `wp-config.php` (see Configuration section)
-4. Activate the theme
-5. Generate API keys at **Settings > API Keys** for external applications
+2. Upload the theme to `wp-content/themes/`
+3. Upload the `fml-music-player` plugin to `wp-content/plugins/` and activate it
+4. Configure API credentials in `wp-config.php` (see Configuration section)
+5. Activate the theme
+6. Generate API keys at **Settings > API Keys** for external applications
 
 ## Configuration
 
@@ -52,6 +69,101 @@ define( 'FML_CORS_ALLOWED_ORIGINS', 'https://app.sync.land,https://your-app.com'
 // JWT Authentication (optional, for external API access)
 define( 'JWT_AUTH_SECRET_KEY', 'your-secret-key' );
 define( 'JWT_AUTH_CORS_ENABLE', true );
+```
+
+---
+
+## FML Music Player Plugin
+
+**Path:** `wp-content/plugins/fml-music-player/`
+
+A sticky-footer music player powered by [Amplitude.js](https://521dimensions.com/open-source/amplitudejs). Renders via the `[fml_music_player]` shortcode (typically placed in Elementor's sticky footer template).
+
+### Features
+
+- **Amplitude.js playback** - play, pause, next, previous, shuffle, repeat
+- **Queue management** - dynamic queue panel with drag-reorder, "Play All" and "Play Now" support from song listings
+- **Session persistence** - current song, queue, and playback position survive page navigation via localStorage
+- **PJAX navigation** - seamless page transitions without interrupting audio playback
+- **Dark mode** - respects CSS custom properties (`--player-bg`, `--player-text`, etc.)
+- **Artist/album links** - clickable metadata in the player linking to artist and album pages
+- **License button** - direct link to the currently playing song's license page
+- **Audio visualizer** - frequency analysis data exposed via `window.FMLAudioData` for integration with visual effects (background particles in the theme)
+- **Volume control** - slider with mute/unmute toggle
+- **Responsive design** - adapts to mobile and desktop viewports
+
+### Plugin Structure
+
+```
+fml-music-player/
+├── fml-music-player.php          # Plugin entry point, shortcode, asset loading
+├── rest-api.php                  # REST API route registration
+├── music-player/
+│   ├── css/
+│   │   └── music-player.css      # Player styles
+│   ├── img/                      # Player control icons (SVG)
+│   └── js/
+│       ├── amplitudejs/
+│       │   └── amplitude.js      # Amplitude.js library
+│       ├── music-player.js       # Main player logic (queue, localStorage, UI)
+│       └── player-visualizer.js  # Audio analyser bridge
+└── wavesurfer-player.js-master/  # WaveSurfer reference (not actively loaded)
+```
+
+### Shortcode
+
+```
+[fml_music_player]
+```
+
+Place this in your Elementor sticky footer widget to render the player controls, progress bar, queue panel, and visualizer toggle.
+
+### How Queue / Playback Works
+
+1. Song listings on the site call `window.playNow(songData)` or `window.playAll(songsArray)` (defined in `music-player.js`).
+2. Amplitude.js is initialized (or re-initialized) with the new queue.
+3. On `beforeunload`, the full queue and playback position are saved to localStorage.
+4. On the next page load, the player restores the queue and seeks to the saved position.
+5. With PJAX enabled (in the theme's `pjax-navigation.js`), page transitions swap content without reloading, so audio continues uninterrupted.
+
+---
+
+## Theme
+
+**Path:** `wp-content/themes/hello-elementor-child-sync-land/`
+
+Child theme of Hello Elementor providing the full Sync.Land frontend.
+
+### Theme Directory Structure
+
+```
+hello-elementor-child-sync-land/
+├── assets/
+│   ├── css/          # Stylesheets (main, search, forms, my-account, etc.)
+│   └── js/           # JavaScript (PJAX navigation, search, particles, tables, etc.)
+├── docs/
+│   ├── api-spec.yaml         # OpenAPI 3.0 specification
+│   ├── api-authentication.md # Auth guide
+│   ├── stripe-setup.md       # Stripe integration
+│   └── pods-schema-nft-fields.md
+├── functions/
+│   ├── api/          # REST API endpoints
+│   │   ├── security.php   # API auth & rate limiting
+│   │   ├── external.php   # External API endpoints
+│   │   ├── licensing.php
+│   │   ├── playlists.php
+│   │   ├── songs.php
+│   │   └── stripe.php
+│   ├── gravityforms/ # Gravity Forms integrations
+│   ├── shortcodes/   # Custom shortcodes
+│   ├── nmkr.php      # NMKR NFT minting
+│   └── ...
+├── php/
+│   └── aws/          # AWS SDK
+├── user-registration/
+│   └── myaccount/    # User account templates
+├── functions.php     # Main theme functions
+└── style.css         # Theme stylesheet
 ```
 
 ## API Authentication
@@ -138,38 +250,6 @@ Enable in **Pods Admin > Settings > REST API**.
 
 Full API documentation: `docs/api-spec.yaml` (OpenAPI 3.0)
 
-## Directory Structure
-
-```
-hello-elementor-child-sync-land/
-├── assets/
-│   ├── css/          # Stylesheets
-│   └── js/           # JavaScript files
-├── docs/
-│   ├── api-spec.yaml         # OpenAPI specification
-│   ├── api-authentication.md # Auth guide
-│   ├── stripe-setup.md       # Stripe integration
-│   └── pods-schema-nft-fields.md
-├── functions/
-│   ├── api/          # REST API endpoints
-│   │   ├── security.php   # API auth & rate limiting
-│   │   ├── external.php   # External API endpoints
-│   │   ├── licensing.php
-│   │   ├── playlists.php
-│   │   ├── songs.php
-│   │   └── stripe.php
-│   ├── gravityforms/ # Gravity Forms integrations
-│   ├── shortcodes/   # Custom shortcodes
-│   ├── nmkr.php      # NMKR NFT minting
-│   └── ...
-├── php/
-│   └── aws/          # AWS SDK
-├── user-registration/
-│   └── myaccount/    # User account templates
-├── functions.php     # Main theme functions
-└── style.css         # Theme stylesheet
-```
-
 ## Custom Post Types (Pods)
 
 - `song` - Music tracks
@@ -187,7 +267,7 @@ hello-elementor-child-sync-land/
 
 ### Local Development
 
-This theme is designed to work with Local by Flywheel for local WordPress development.
+This project is designed to work with Local by Flywheel for local WordPress development.
 
 ### Security Notes
 
@@ -195,7 +275,6 @@ This theme is designed to work with Local by Flywheel for local WordPress develo
 - All API keys should be in `wp-config.php`
 - Use environment variables in production
 - API rate limiting is enabled by default
-- SQL injection vulnerabilities have been fixed
 
 ## License
 
