@@ -740,6 +740,32 @@ function fml_licensing_settings_page() {
             update_option('fml_stripe_webhook_secret', sanitize_text_field($_POST['fml_stripe_webhook_secret']));
         }
 
+        // Save NMKR mode
+        $nmkr_mode = sanitize_text_field($_POST['fml_nmkr_mode'] ?? 'preprod');
+        update_option('fml_nmkr_mode', in_array($nmkr_mode, ['preprod', 'mainnet']) ? $nmkr_mode : 'preprod');
+
+        // Save NMKR Preprod keys
+        if (!empty($_POST['fml_nmkr_preprod_api_key'])) {
+            update_option('fml_nmkr_preprod_api_key', sanitize_text_field($_POST['fml_nmkr_preprod_api_key']));
+        }
+        if (!empty($_POST['fml_nmkr_preprod_project_uid'])) {
+            update_option('fml_nmkr_preprod_project_uid', sanitize_text_field($_POST['fml_nmkr_preprod_project_uid']));
+        }
+        if (!empty($_POST['fml_nmkr_preprod_policy_id'])) {
+            update_option('fml_nmkr_preprod_policy_id', sanitize_text_field($_POST['fml_nmkr_preprod_policy_id']));
+        }
+
+        // Save NMKR Mainnet keys
+        if (!empty($_POST['fml_nmkr_mainnet_api_key'])) {
+            update_option('fml_nmkr_mainnet_api_key', sanitize_text_field($_POST['fml_nmkr_mainnet_api_key']));
+        }
+        if (!empty($_POST['fml_nmkr_mainnet_project_uid'])) {
+            update_option('fml_nmkr_mainnet_project_uid', sanitize_text_field($_POST['fml_nmkr_mainnet_project_uid']));
+        }
+        if (!empty($_POST['fml_nmkr_mainnet_policy_id'])) {
+            update_option('fml_nmkr_mainnet_policy_id', sanitize_text_field($_POST['fml_nmkr_mainnet_policy_id']));
+        }
+
         echo '<div class="notice notice-success"><p>Settings saved.</p></div>';
     }
 
@@ -754,6 +780,15 @@ function fml_licensing_settings_page() {
     $live_secret = get_option('fml_stripe_live_secret_key', '');
     $live_publishable = get_option('fml_stripe_live_publishable_key', '');
     $webhook_secret = get_option('fml_stripe_webhook_secret', '');
+
+    // Get NMKR settings
+    $nmkr_mode = get_option('fml_nmkr_mode', 'preprod');
+    $nmkr_preprod_api_key = get_option('fml_nmkr_preprod_api_key', '');
+    $nmkr_preprod_project_uid = get_option('fml_nmkr_preprod_project_uid', '');
+    $nmkr_preprod_policy_id = get_option('fml_nmkr_preprod_policy_id', '');
+    $nmkr_mainnet_api_key = get_option('fml_nmkr_mainnet_api_key', '');
+    $nmkr_mainnet_project_uid = get_option('fml_nmkr_mainnet_project_uid', '');
+    $nmkr_mainnet_policy_id = get_option('fml_nmkr_mainnet_policy_id', '');
 
     ?>
     <div class="wrap">
@@ -886,17 +921,161 @@ function fml_licensing_settings_page() {
                 </tr>
             </table>
 
-            <!-- Connection Status -->
-            <h3>Connection Status</h3>
+            <!-- Stripe Connection Status -->
+            <h3>Stripe Connection Status</h3>
             <table class="form-table">
                 <tr>
                     <th scope="row">Current Connection</th>
                     <td>
                         <button type="button" class="button button-secondary" id="fml-verify-current">
                             <span class="dashicons dashicons-update" style="vertical-align: middle;"></span>
-                            Verify Current Connection
+                            Verify Stripe Connection
                         </button>
                         <span id="fml-current-status" style="margin-left: 10px;"></span>
+                    </td>
+                </tr>
+            </table>
+
+            <hr style="margin: 30px 0;">
+
+            <!-- NMKR API Configuration -->
+            <h2>NMKR API Configuration (NFT Minting)</h2>
+            <p class="description">NMKR is used to mint licenses as NFTs on the Cardano blockchain.</p>
+
+            <table class="form-table">
+                <tr>
+                    <th scope="row">NMKR Mode</th>
+                    <td>
+                        <fieldset>
+                            <label>
+                                <input type="radio" name="fml_nmkr_mode" value="preprod" <?php checked($nmkr_mode, 'preprod'); ?>>
+                                <span style="color: #f0ad4e; font-weight: bold;">Preprod (Test)</span>
+                                <span class="description"> - Use preprod network (test ADA, no real value)</span>
+                            </label>
+                            <br>
+                            <label>
+                                <input type="radio" name="fml_nmkr_mode" value="mainnet" <?php checked($nmkr_mode, 'mainnet'); ?>>
+                                <span style="color: #5cb85c; font-weight: bold;">Mainnet (Live)</span>
+                                <span class="description"> - Use mainnet network (real ADA, real NFTs)</span>
+                            </label>
+                        </fieldset>
+                        <p class="description" style="margin-top: 10px;">
+                            <strong>Current Mode:</strong>
+                            <?php if ($nmkr_mode === 'mainnet'): ?>
+                                <span style="background: #5cb85c; color: white; padding: 2px 8px; border-radius: 3px;">MAINNET</span>
+                            <?php else: ?>
+                                <span style="background: #f0ad4e; color: white; padding: 2px 8px; border-radius: 3px;">PREPROD</span>
+                            <?php endif; ?>
+                        </p>
+                    </td>
+                </tr>
+            </table>
+
+            <h3 style="border-bottom: 1px solid #f0ad4e; padding-bottom: 5px; color: #f0ad4e;">Preprod (Test) Configuration</h3>
+            <p class="description">Get your preprod API key from <a href="https://studio.preprod.nmkr.io" target="_blank">studio.preprod.nmkr.io</a></p>
+            <table class="form-table">
+                <tr>
+                    <th scope="row">
+                        <label for="fml_nmkr_preprod_api_key">Preprod API Key</label>
+                    </th>
+                    <td>
+                        <input type="password" name="fml_nmkr_preprod_api_key" id="fml_nmkr_preprod_api_key"
+                               class="regular-text" placeholder="Your preprod API key"
+                               value="<?php echo esc_attr($nmkr_preprod_api_key); ?>" autocomplete="off">
+                        <button type="button" class="button fml-toggle-visibility" data-target="fml_nmkr_preprod_api_key">Show</button>
+                        <button type="button" class="button fml-verify-nmkr" data-key-type="preprod">Verify</button>
+                        <span class="fml-verify-status" id="fml-nmkr-preprod-status"></span>
+                        <?php if (!empty($nmkr_preprod_api_key)): ?>
+                            <p class="description" style="color: green;">&#10003; Key saved</p>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">
+                        <label for="fml_nmkr_preprod_project_uid">Preprod Project UID</label>
+                    </th>
+                    <td>
+                        <input type="text" name="fml_nmkr_preprod_project_uid" id="fml_nmkr_preprod_project_uid"
+                               class="regular-text" placeholder="Project UID from NMKR Studio"
+                               value="<?php echo esc_attr($nmkr_preprod_project_uid); ?>">
+                        <?php if (!empty($nmkr_preprod_project_uid)): ?>
+                            <p class="description" style="color: green;">&#10003; Saved</p>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">
+                        <label for="fml_nmkr_preprod_policy_id">Preprod Policy ID</label>
+                    </th>
+                    <td>
+                        <input type="text" name="fml_nmkr_preprod_policy_id" id="fml_nmkr_preprod_policy_id"
+                               class="regular-text" placeholder="Policy ID from your NMKR project"
+                               value="<?php echo esc_attr($nmkr_preprod_policy_id); ?>">
+                        <?php if (!empty($nmkr_preprod_policy_id)): ?>
+                            <p class="description" style="color: green;">&#10003; Saved</p>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+            </table>
+
+            <h3 style="border-bottom: 1px solid #5cb85c; padding-bottom: 5px; color: #5cb85c;">Mainnet (Live) Configuration</h3>
+            <p class="description">Get your mainnet API key from <a href="https://studio.nmkr.io" target="_blank">studio.nmkr.io</a></p>
+            <table class="form-table">
+                <tr>
+                    <th scope="row">
+                        <label for="fml_nmkr_mainnet_api_key">Mainnet API Key</label>
+                    </th>
+                    <td>
+                        <input type="password" name="fml_nmkr_mainnet_api_key" id="fml_nmkr_mainnet_api_key"
+                               class="regular-text" placeholder="Your mainnet API key"
+                               value="<?php echo esc_attr($nmkr_mainnet_api_key); ?>" autocomplete="off">
+                        <button type="button" class="button fml-toggle-visibility" data-target="fml_nmkr_mainnet_api_key">Show</button>
+                        <button type="button" class="button fml-verify-nmkr" data-key-type="mainnet">Verify</button>
+                        <span class="fml-verify-status" id="fml-nmkr-mainnet-status"></span>
+                        <?php if (!empty($nmkr_mainnet_api_key)): ?>
+                            <p class="description" style="color: green;">&#10003; Key saved</p>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">
+                        <label for="fml_nmkr_mainnet_project_uid">Mainnet Project UID</label>
+                    </th>
+                    <td>
+                        <input type="text" name="fml_nmkr_mainnet_project_uid" id="fml_nmkr_mainnet_project_uid"
+                               class="regular-text" placeholder="Project UID from NMKR Studio"
+                               value="<?php echo esc_attr($nmkr_mainnet_project_uid); ?>">
+                        <?php if (!empty($nmkr_mainnet_project_uid)): ?>
+                            <p class="description" style="color: green;">&#10003; Saved</p>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">
+                        <label for="fml_nmkr_mainnet_policy_id">Mainnet Policy ID</label>
+                    </th>
+                    <td>
+                        <input type="text" name="fml_nmkr_mainnet_policy_id" id="fml_nmkr_mainnet_policy_id"
+                               class="regular-text" placeholder="Policy ID from your NMKR project"
+                               value="<?php echo esc_attr($nmkr_mainnet_policy_id); ?>">
+                        <?php if (!empty($nmkr_mainnet_policy_id)): ?>
+                            <p class="description" style="color: green;">&#10003; Saved</p>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+            </table>
+
+            <!-- NMKR Connection Status -->
+            <h3>NMKR Connection Status</h3>
+            <table class="form-table">
+                <tr>
+                    <th scope="row">Current Connection</th>
+                    <td>
+                        <button type="button" class="button button-secondary" id="fml-verify-nmkr-current">
+                            <span class="dashicons dashicons-update" style="vertical-align: middle;"></span>
+                            Verify NMKR Connection
+                        </button>
+                        <span id="fml-nmkr-current-status" style="margin-left: 10px;"></span>
                     </td>
                 </tr>
             </table>
@@ -1032,7 +1211,7 @@ function fml_licensing_settings_page() {
             });
         });
 
-        // Verify current connection
+        // Verify current Stripe connection
         $('#fml-verify-current').on('click', function() {
             var $btn = $(this);
             var $status = $('#fml-current-status');
@@ -1042,6 +1221,63 @@ function fml_licensing_settings_page() {
 
             $.post(ajaxurl, {
                 action: 'fml_verify_stripe',
+                nonce: '<?php echo wp_create_nonce('fml_licensing_settings'); ?>',
+                key_type: 'current'
+            }, function(response) {
+                $btn.prop('disabled', false);
+                if (response.success) {
+                    $status.removeClass('error loading').css('color', '#5cb85c').text('✓ ' + response.data.message);
+                } else {
+                    $status.removeClass('success loading').css('color', '#d9534f').text('✗ ' + response.data.message);
+                }
+            }).fail(function() {
+                $btn.prop('disabled', false);
+                $status.removeClass('success loading').css('color', '#d9534f').text('✗ Connection failed');
+            });
+        });
+
+        // Verify individual NMKR keys
+        $('.fml-verify-nmkr').on('click', function() {
+            var keyType = $(this).data('key-type');
+            var $status = $('#fml-nmkr-' + keyType + '-status');
+            var apiKey = keyType === 'preprod'
+                ? $('#fml_nmkr_preprod_api_key').val()
+                : $('#fml_nmkr_mainnet_api_key').val();
+
+            if (!apiKey) {
+                $status.removeClass('success loading').addClass('error').text('No key entered');
+                return;
+            }
+
+            $status.removeClass('success error').addClass('loading').text('Verifying...');
+
+            $.post(ajaxurl, {
+                action: 'fml_verify_nmkr',
+                nonce: '<?php echo wp_create_nonce('fml_licensing_settings'); ?>',
+                key_type: keyType,
+                preprod_api_key: keyType === 'preprod' ? apiKey : '',
+                mainnet_api_key: keyType === 'mainnet' ? apiKey : ''
+            }, function(response) {
+                if (response.success) {
+                    $status.removeClass('error loading').addClass('success').text('✓ ' + response.data.message);
+                } else {
+                    $status.removeClass('success loading').addClass('error').text('✗ ' + response.data.message);
+                }
+            }).fail(function() {
+                $status.removeClass('success loading').addClass('error').text('✗ Connection failed');
+            });
+        });
+
+        // Verify current NMKR connection
+        $('#fml-verify-nmkr-current').on('click', function() {
+            var $btn = $(this);
+            var $status = $('#fml-nmkr-current-status');
+
+            $btn.prop('disabled', true);
+            $status.removeClass('success error').addClass('loading').text('Verifying...');
+
+            $.post(ajaxurl, {
+                action: 'fml_verify_nmkr',
                 nonce: '<?php echo wp_create_nonce('fml_licensing_settings'); ?>',
                 key_type: 'current'
             }, function(response) {

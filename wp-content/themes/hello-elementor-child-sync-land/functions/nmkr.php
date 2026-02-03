@@ -1,36 +1,148 @@
 <?php
+/**
+ * NMKR NFT Minting Integration for Sync.Land
+ *
+ * Handles NFT minting via NMKR API with support for:
+ * - Preprod (test) and Mainnet (live) environments
+ * - API keys managed in WordPress Admin > Settings > Sync.Land Licensing
+ * - Backwards compatible with wp-config.php constants
+ */
 
-
-add_action('wp_ajax_mint_nft', 'mint_nft_callback');
-add_action('wp_ajax_nopriv_mint_nft', 'mint_nft_callback'); // Allow non-logged-in users
+// Prevent direct access
+if (!defined('ABSPATH')) {
+    exit;
+}
 
 /**
- * NMKR NFT Minting Integration (Safe Version)
- * Uses constants from wp-config.php: FML_NMKR_API_KEY, FML_NMKR_PROJECT_UID, FML_NMKR_POLICY_ID, FML_NMKR_API_URL
- * Fails gracefully if constants are missing
+ * ============================================================================
+ * NMKR API KEY MANAGEMENT
+ * ============================================================================
  */
 
 /**
- * Get NMKR credentials safely
+ * Get current NMKR mode (preprod or mainnet)
+ */
+function fml_get_nmkr_mode() {
+    return get_option('fml_nmkr_mode', 'preprod');
+}
+
+/**
+ * Check if NMKR is in mainnet (live) mode
+ */
+function fml_nmkr_is_mainnet() {
+    return fml_get_nmkr_mode() === 'mainnet';
+}
+
+/**
+ * Get NMKR API URL based on current mode
+ */
+function fml_get_nmkr_api_url() {
+    $mode = fml_get_nmkr_mode();
+
+    if ($mode === 'mainnet') {
+        $url = get_option('fml_nmkr_mainnet_api_url', 'https://studio-api.nmkr.io');
+    } else {
+        $url = get_option('fml_nmkr_preprod_api_url', 'https://studio-api.preprod.nmkr.io');
+    }
+
+    // Fallback to constant if option is empty
+    if (empty($url) && defined('FML_NMKR_API_URL')) {
+        $url = FML_NMKR_API_URL;
+    }
+
+    return rtrim($url, '/');
+}
+
+/**
+ * Get active NMKR API key based on current mode
+ */
+function fml_get_nmkr_api_key() {
+    $mode = fml_get_nmkr_mode();
+
+    if ($mode === 'mainnet') {
+        $key = get_option('fml_nmkr_mainnet_api_key', '');
+    } else {
+        $key = get_option('fml_nmkr_preprod_api_key', '');
+    }
+
+    // Fallback to constant if option is empty
+    if (empty($key) && defined('FML_NMKR_API_KEY')) {
+        $key = FML_NMKR_API_KEY;
+    }
+
+    return $key;
+}
+
+/**
+ * Get active NMKR project UID based on current mode
+ */
+function fml_get_nmkr_project_uid() {
+    $mode = fml_get_nmkr_mode();
+
+    if ($mode === 'mainnet') {
+        $uid = get_option('fml_nmkr_mainnet_project_uid', '');
+    } else {
+        $uid = get_option('fml_nmkr_preprod_project_uid', '');
+    }
+
+    // Fallback to constant if option is empty
+    if (empty($uid) && defined('FML_NMKR_PROJECT_UID')) {
+        $uid = FML_NMKR_PROJECT_UID;
+    }
+
+    return $uid;
+}
+
+/**
+ * Get active NMKR policy ID based on current mode
+ */
+function fml_get_nmkr_policy_id() {
+    $mode = fml_get_nmkr_mode();
+
+    if ($mode === 'mainnet') {
+        $id = get_option('fml_nmkr_mainnet_policy_id', '');
+    } else {
+        $id = get_option('fml_nmkr_preprod_policy_id', '');
+    }
+
+    // Fallback to constant if option is empty
+    if (empty($id) && defined('FML_NMKR_POLICY_ID')) {
+        $id = FML_NMKR_POLICY_ID;
+    }
+
+    return $id;
+}
+
+/**
+ * Check if NMKR is properly configured
+ */
+function fml_nmkr_is_configured() {
+    $api_key = fml_get_nmkr_api_key();
+    $project_uid = fml_get_nmkr_project_uid();
+    return !empty($api_key) && !empty($project_uid);
+}
+
+/**
+ * Get NMKR credentials safely (updated to use new helper functions)
  */
 function fml_get_nmkr_credentials() {
     $missing = [];
 
-    $api_key = defined('FML_NMKR_API_KEY') ? FML_NMKR_API_KEY : null;
-    $project_uid = defined('FML_NMKR_PROJECT_UID') ? FML_NMKR_PROJECT_UID : null;
-    $policy_id = defined('FML_NMKR_POLICY_ID') ? FML_NMKR_POLICY_ID : null;
-    $api_url = defined('FML_NMKR_API_URL') ? FML_NMKR_API_URL : null;
+    $api_key = fml_get_nmkr_api_key();
+    $project_uid = fml_get_nmkr_project_uid();
+    $policy_id = fml_get_nmkr_policy_id();
+    $api_url = fml_get_nmkr_api_url();
 
-    if (!$api_key) $missing[] = 'FML_NMKR_API_KEY';
-    if (!$project_uid) $missing[] = 'FML_NMKR_PROJECT_UID';
-    if (!$policy_id) $missing[] = 'FML_NMKR_POLICY_ID';
-    if (!$api_url) $missing[] = 'FML_NMKR_API_URL';
+    if (empty($api_key)) $missing[] = 'API Key';
+    if (empty($project_uid)) $missing[] = 'Project UID';
+    if (empty($policy_id)) $missing[] = 'Policy ID';
+    if (empty($api_url)) $missing[] = 'API URL';
 
     if (!empty($missing)) {
-        // Return error array instead of fatal error
         return [
             'success' => false,
-            'error' => 'Missing NMKR constants: ' . implode(', ', $missing)
+            'error' => 'Missing NMKR configuration: ' . implode(', ', $missing),
+            'mode' => fml_get_nmkr_mode()
         ];
     }
 
@@ -39,12 +151,117 @@ function fml_get_nmkr_credentials() {
         'api_key' => $api_key,
         'project_uid' => $project_uid,
         'policy_id' => $policy_id,
-        'api_url' => rtrim($api_url, '/')
+        'api_url' => $api_url,
+        'mode' => fml_get_nmkr_mode()
     ];
 }
 
+/**
+ * Verify NMKR connection by making a test API call
+ */
+function fml_verify_nmkr_connection($api_key = null, $api_url = null) {
+    if ($api_key === null) {
+        $api_key = fml_get_nmkr_api_key();
+    }
+    if ($api_url === null) {
+        $api_url = fml_get_nmkr_api_url();
+    }
+
+    if (empty($api_key)) {
+        return [
+            'success' => false,
+            'error' => 'No API key provided'
+        ];
+    }
+
+    // Make a simple API call to verify the key works (get account info)
+    $response = wp_remote_get($api_url . '/v2/GetCounts', [
+        'headers' => [
+            'Authorization' => 'Bearer ' . $api_key
+        ],
+        'timeout' => 15
+    ]);
+
+    if (is_wp_error($response)) {
+        return [
+            'success' => false,
+            'error' => $response->get_error_message()
+        ];
+    }
+
+    $status_code = wp_remote_retrieve_response_code($response);
+    $body = json_decode(wp_remote_retrieve_body($response), true);
+
+    if ($status_code === 200) {
+        // Determine if preprod or mainnet based on URL
+        $is_preprod = strpos($api_url, 'preprod') !== false;
+
+        return [
+            'success' => true,
+            'mode' => $is_preprod ? 'preprod' : 'mainnet',
+            'message' => 'Connected successfully' . ($is_preprod ? ' (Preprod/Test)' : ' (Mainnet/Live)'),
+            'data' => $body
+        ];
+    } else {
+        $error_message = $body['message'] ?? $body['error'] ?? 'Invalid API key or connection failed';
+        return [
+            'success' => false,
+            'error' => $error_message,
+            'http_code' => $status_code
+        ];
+    }
+}
+
+/**
+ * AJAX handler for NMKR connection verification
+ */
+add_action('wp_ajax_fml_verify_nmkr', 'fml_ajax_verify_nmkr_connection');
+
+function fml_ajax_verify_nmkr_connection() {
+    check_ajax_referer('fml_licensing_settings', 'nonce');
+
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(['message' => 'Unauthorized']);
+    }
+
+    $key_type = sanitize_text_field($_POST['key_type'] ?? 'current');
+
+    // Determine which credentials to test
+    if ($key_type === 'preprod') {
+        $api_key = sanitize_text_field($_POST['preprod_api_key'] ?? '');
+        $api_url = 'https://studio-api.preprod.nmkr.io';
+    } elseif ($key_type === 'mainnet') {
+        $api_key = sanitize_text_field($_POST['mainnet_api_key'] ?? '');
+        $api_url = 'https://studio-api.nmkr.io';
+    } else {
+        $api_key = fml_get_nmkr_api_key();
+        $api_url = fml_get_nmkr_api_url();
+    }
+
+    if (empty($api_key)) {
+        wp_send_json_error(['message' => 'No API key provided']);
+    }
+
+    $result = fml_verify_nmkr_connection($api_key, $api_url);
+
+    if ($result['success']) {
+        wp_send_json_success([
+            'message' => $result['message'],
+            'mode' => $result['mode']
+        ]);
+    } else {
+        wp_send_json_error(['message' => $result['error']]);
+    }
+}
+
+/**
+ * ============================================================================
+ * LEGACY AJAX HANDLERS
+ * ============================================================================
+ */
+
 add_action('wp_ajax_mint_nft', 'mint_nft_callback');
-add_action('wp_ajax_nopriv_mint_nft', 'mint_nft_callback');
+add_action('wp_ajax_nopriv_mint_nft', 'mint_nft_callback'); // Allow non-logged-in users
 
 function mint_nft_callback() {
     check_ajax_referer('mint_nft_nonce', 'nonce');

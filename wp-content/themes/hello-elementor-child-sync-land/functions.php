@@ -79,7 +79,7 @@ add_action('wp_body_open', 'add_loading_screen');
 //
 add_action('wp_enqueue_scripts', function() {
     
-    $style_version = '1.331'; // Change this to your desired version number
+    $style_version = '1.332'; // Change this to your desired version number
     
     //
     //ADD CSS
