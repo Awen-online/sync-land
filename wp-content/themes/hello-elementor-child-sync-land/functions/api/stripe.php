@@ -125,8 +125,17 @@ function fml_verify_stripe_webhook($payload, $sig_header, $secret) {
 function fml_handle_checkout_completed($session) {
     $metadata = $session['metadata'] ?? [];
 
-    // Check if this is a non-exclusive license purchase
-    if (!isset($metadata['type']) || $metadata['type'] !== 'non_exclusive_license') {
+    // Route to appropriate handler based on checkout type
+    if (isset($metadata['type'])) {
+        if ($metadata['type'] === 'cart_checkout') {
+            fml_handle_cart_checkout_completed($session);
+            return;
+        }
+
+        if ($metadata['type'] !== 'non_exclusive_license') {
+            return;
+        }
+    } else {
         return;
     }
 
@@ -533,10 +542,12 @@ add_action('admin_menu', function() {
 function fml_licensing_settings_page() {
     if (isset($_POST['fml_save_licensing_settings']) && check_admin_referer('fml_licensing_settings')) {
         update_option('fml_non_exclusive_license_price', intval($_POST['fml_non_exclusive_license_price']));
+        update_option('fml_nft_minting_fee', intval($_POST['fml_nft_minting_fee']));
         echo '<div class="notice notice-success"><p>Settings saved.</p></div>';
     }
 
     $license_price = get_option('fml_non_exclusive_license_price', 4900);
+    $nft_fee = get_option('fml_nft_minting_fee', 500);
 
     ?>
     <div class="wrap">
@@ -560,30 +571,61 @@ function fml_licensing_settings_page() {
                         </p>
                     </td>
                 </tr>
+                <tr>
+                    <th scope="row">
+                        <label for="fml_nft_minting_fee">NFT Minting Fee (cents USD)</label>
+                    </th>
+                    <td>
+                        <input type="number" name="fml_nft_minting_fee" id="fml_nft_minting_fee"
+                               value="<?php echo esc_attr($nft_fee); ?>" min="0" step="1" />
+                        <p class="description">
+                            Price in cents. 500 = $5.00 USD<br>
+                            Fee for minting license as NFT on Cardano blockchain.
+                        </p>
+                    </td>
+                </tr>
             </table>
 
             <h2>License Types</h2>
-            <table class="widefat" style="max-width: 600px;">
+            <table class="widefat" style="max-width: 800px;">
                 <thead>
                     <tr>
-                        <th>License Type</th>
-                        <th>Price</th>
-                        <th>NFT Available</th>
+                        <th>License Option</th>
+                        <th>License Fee</th>
+                        <th>NFT Fee</th>
+                        <th>Total</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr>
                         <td><strong>CC-BY 4.0</strong><br><small>Creative Commons Attribution</small></td>
                         <td>Free</td>
-                        <td>Yes (free mint)</td>
+                        <td>-</td>
+                        <td><strong>Free</strong></td>
                     </tr>
                     <tr>
-                        <td><strong>Non-Exclusive Sync</strong><br><small>Commercial sync license</small></td>
+                        <td><strong>CC-BY 4.0 + NFT</strong><br><small>CC-BY with blockchain verification</small></td>
+                        <td>Free</td>
+                        <td>$<?php echo number_format($nft_fee / 100, 2); ?></td>
+                        <td><strong>$<?php echo number_format($nft_fee / 100, 2); ?></strong></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Commercial License</strong><br><small>Non-exclusive sync license</small></td>
                         <td>$<?php echo number_format($license_price / 100, 2); ?></td>
-                        <td>No</td>
+                        <td>-</td>
+                        <td><strong>$<?php echo number_format($license_price / 100, 2); ?></strong></td>
+                    </tr>
+                    <tr>
+                        <td><strong>Commercial + NFT</strong><br><small>Commercial with blockchain verification</small></td>
+                        <td>$<?php echo number_format($license_price / 100, 2); ?></td>
+                        <td>$<?php echo number_format($nft_fee / 100, 2); ?></td>
+                        <td><strong>$<?php echo number_format(($license_price + $nft_fee) / 100, 2); ?></strong></td>
                     </tr>
                 </tbody>
             </table>
+            <p class="description" style="margin-top: 10px;">
+                <strong>NFT Verification:</strong> Available for ANY license type. Mints the license as an NFT on Cardano blockchain for permanent verification.
+            </p>
 
             <h2>Stripe Configuration Status</h2>
             <table class="form-table">
@@ -626,4 +668,376 @@ function fml_licensing_settings_page() {
         </form>
     </div>
     <?php
+}
+
+
+/**
+ * ============================================================================
+ * CART STRIPE CHECKOUT - MULTI-ITEM SUPPORT
+ * ============================================================================
+ */
+
+/**
+ * Create Stripe Checkout session for cart with multiple items
+ *
+ * @param array  $summary          Cart summary from fml_cart_get_summary()
+ * @param string $licensee_name    Licensee name
+ * @param string $project_name     Project name
+ * @param string $usage_description Usage description
+ * @return array Result with checkout URL or error
+ */
+function fml_create_cart_stripe_checkout($summary, $licensee_name, $project_name, $usage_description) {
+    // Verify Stripe is configured
+    if (!defined('FML_STRIPE_SECRET_KEY') || empty(FML_STRIPE_SECRET_KEY)) {
+        return [
+            'success' => false,
+            'error' => 'Stripe not configured'
+        ];
+    }
+
+    if (empty($summary['items'])) {
+        return [
+            'success' => false,
+            'error' => 'Cart is empty'
+        ];
+    }
+
+    $user_id = get_current_user_id();
+    $user = wp_get_current_user();
+    $license_price = intval(get_option('fml_non_exclusive_license_price', 4900));
+    $nft_fee = intval(get_option('fml_nft_minting_fee', 500));
+
+    // Build line items for Stripe
+    $line_items = [];
+    $cart_items_meta = []; // Store cart item details for webhook
+
+    foreach ($summary['items'] as $index => $item) {
+        $item_name = "{$item['artist_name']} - {$item['song_title']}";
+
+        // Add license fee if commercial
+        if ($item['license_type'] === 'non_exclusive') {
+            $line_items[] = [
+                'price_data' => [
+                    'currency' => 'usd',
+                    'product_data' => [
+                        'name' => "Commercial License: {$item_name}",
+                        'description' => 'Non-exclusive sync license for commercial use'
+                    ],
+                    'unit_amount' => $license_price
+                ],
+                'quantity' => 1
+            ];
+        }
+
+        // Add NFT fee if selected
+        if (!empty($item['include_nft'])) {
+            $line_items[] = [
+                'price_data' => [
+                    'currency' => 'usd',
+                    'product_data' => [
+                        'name' => "NFT Verification: {$item_name}",
+                        'description' => 'Blockchain verification on Cardano'
+                    ],
+                    'unit_amount' => $nft_fee
+                ],
+                'quantity' => 1
+            ];
+        }
+
+        // Store item metadata for webhook processing
+        $cart_items_meta[] = [
+            'song_id' => $item['song_id'],
+            'license_type' => $item['license_type'],
+            'include_nft' => $item['include_nft'] ? '1' : '0',
+            'wallet_address' => $item['wallet_address'] ?? ''
+        ];
+    }
+
+    // If no line items (all free CC-BY without NFT), this shouldn't reach here
+    if (empty($line_items)) {
+        return [
+            'success' => false,
+            'error' => 'No payable items in cart'
+        ];
+    }
+
+    // Build checkout session with cart metadata
+    // Stripe metadata has limits, so we store cart items as JSON
+    $checkout_data = [
+        'mode' => 'payment',
+        'line_items' => $line_items,
+        'success_url' => home_url("/account/my-licenses/?payment=success&session_id={CHECKOUT_SESSION_ID}"),
+        'cancel_url' => home_url("/cart/?payment=cancelled"),
+        'metadata' => [
+            'type' => 'cart_checkout',
+            'user_id' => $user_id,
+            'licensee_name' => substr($licensee_name ?: $user->display_name, 0, 500),
+            'project_name' => substr($project_name, 0, 500),
+            'usage_description' => substr($usage_description, 0, 500),
+            'cart_items' => json_encode($cart_items_meta) // Store as JSON string
+        ],
+        'customer_email' => $user->user_email
+    ];
+
+    // Make Stripe API request
+    $response = wp_remote_post('https://api.stripe.com/v1/checkout/sessions', [
+        'headers' => [
+            'Authorization' => 'Bearer ' . FML_STRIPE_SECRET_KEY,
+            'Content-Type' => 'application/x-www-form-urlencoded'
+        ],
+        'body' => fml_build_stripe_body($checkout_data),
+        'timeout' => 30
+    ]);
+
+    if (is_wp_error($response)) {
+        error_log('Stripe API error: ' . $response->get_error_message());
+        return [
+            'success' => false,
+            'error' => 'Payment service unavailable'
+        ];
+    }
+
+    $body = json_decode(wp_remote_retrieve_body($response), true);
+
+    if (isset($body['error'])) {
+        error_log('Stripe error: ' . json_encode($body['error']));
+        return [
+            'success' => false,
+            'error' => $body['error']['message'] ?? 'Payment error'
+        ];
+    }
+
+    // Store cart items in transient for webhook (backup for metadata size limits)
+    set_transient('fml_checkout_' . $body['id'], [
+        'cart_items' => $cart_items_meta,
+        'licensee_name' => $licensee_name ?: $user->display_name,
+        'project_name' => $project_name,
+        'usage_description' => $usage_description,
+        'user_id' => $user_id
+    ], HOUR_IN_SECONDS);
+
+    return [
+        'success' => true,
+        'checkout_url' => $body['url'],
+        'session_id' => $body['id']
+    ];
+}
+
+
+/**
+ * Handle cart checkout completion - Process multiple licenses
+ */
+function fml_handle_cart_checkout_completed($session) {
+    $metadata = $session['metadata'] ?? [];
+
+    // Check if this is a cart checkout
+    if (!isset($metadata['type']) || $metadata['type'] !== 'cart_checkout') {
+        return;
+    }
+
+    $user_id = intval($metadata['user_id'] ?? 0);
+    $licensee_name = $metadata['licensee_name'] ?? '';
+    $project_name = $metadata['project_name'] ?? '';
+    $usage_description = $metadata['usage_description'] ?? '';
+
+    // Get cart items from metadata or transient backup
+    $cart_items = [];
+    if (!empty($metadata['cart_items'])) {
+        $cart_items = json_decode($metadata['cart_items'], true);
+    }
+
+    // Fallback to transient if metadata parsing fails
+    if (empty($cart_items)) {
+        $transient_data = get_transient('fml_checkout_' . $session['id']);
+        if ($transient_data) {
+            $cart_items = $transient_data['cart_items'] ?? [];
+            $licensee_name = $licensee_name ?: ($transient_data['licensee_name'] ?? '');
+            $project_name = $project_name ?: ($transient_data['project_name'] ?? '');
+            $usage_description = $usage_description ?: ($transient_data['usage_description'] ?? '');
+            $user_id = $user_id ?: ($transient_data['user_id'] ?? 0);
+        }
+    }
+
+    if (empty($cart_items) || $user_id <= 0) {
+        error_log("Cart checkout completed but missing cart_items or user_id. Session: " . $session['id']);
+        return;
+    }
+
+    $licenses_created = [];
+
+    foreach ($cart_items as $item) {
+        $song_id = intval($item['song_id'] ?? 0);
+        $license_type = $item['license_type'] ?? 'cc_by';
+        $include_nft = !empty($item['include_nft']) && $item['include_nft'] !== '0';
+        $wallet_address = $item['wallet_address'] ?? '';
+
+        if ($song_id <= 0) {
+            continue;
+        }
+
+        // Get song and artist info
+        $song_pod = pods('song', $song_id);
+        if (!$song_pod || !$song_pod->exists()) {
+            error_log("Cart checkout: Song {$song_id} not found");
+            continue;
+        }
+
+        $song_name = $song_pod->field('post_title');
+        $artist_data = $song_pod->field('artist');
+        $artist_name = 'Unknown Artist';
+        if (!empty($artist_data)) {
+            $artist_id = is_array($artist_data) ? $artist_data['ID'] : $artist_data;
+            $artist_pod = pods('artist', $artist_id);
+            if ($artist_pod && $artist_pod->exists()) {
+                $artist_name = $artist_pod->field('post_title');
+            }
+        }
+
+        // Generate appropriate license PDF
+        if ($license_type === 'non_exclusive') {
+            // Commercial license
+            $license_price = intval(get_option('fml_non_exclusive_license_price', 4900));
+            $license_result = fml_generate_non_exclusive_license_pdf(
+                $song_id,
+                $song_name,
+                $artist_name,
+                $licensee_name,
+                $project_name,
+                $usage_description,
+                $license_price / 100,
+                'usd'
+            );
+        } else {
+            // CC-BY license
+            $license_result = fml_generate_ccby_license_pdf(
+                $song_id,
+                $song_name,
+                $artist_name,
+                $licensee_name,
+                $project_name
+            );
+        }
+
+        if (!$license_result['success']) {
+            error_log("Failed to generate license PDF for song {$song_id}: " . ($license_result['error'] ?? 'Unknown error'));
+            continue;
+        }
+
+        // Create license record
+        $pod = pods('license');
+        $license_data = [
+            'user' => $user_id,
+            'song' => $song_id,
+            'datetime' => current_time('mysql'),
+            'license_url' => $license_result['url'],
+            'licensor' => $licensee_name,
+            'project' => $project_name,
+            'description_of_usage' => $usage_description,
+            'legal_name' => $licensee_name,
+            'license_type' => $license_type,
+            'stripe_payment_id' => $session['payment_intent'] ?? $session['id'],
+            'stripe_payment_status' => 'completed'
+        ];
+
+        // Add payment amount for commercial licenses
+        if ($license_type === 'non_exclusive') {
+            $license_data['payment_amount'] = intval(get_option('fml_non_exclusive_license_price', 4900));
+            $license_data['payment_currency'] = 'usd';
+        }
+
+        // Add NFT fields if NFT was selected
+        if ($include_nft) {
+            $license_data['nft_status'] = 'pending';
+            $license_data['wallet_address'] = $wallet_address;
+        }
+
+        $new_license_id = $pod->add($license_data);
+
+        if ($new_license_id) {
+            wp_update_post([
+                'ID' => $new_license_id,
+                'post_status' => 'publish'
+            ]);
+
+            $licenses_created[] = [
+                'license_id' => $new_license_id,
+                'song_id' => $song_id,
+                'include_nft' => $include_nft,
+                'wallet_address' => $wallet_address
+            ];
+
+            error_log("License created: {$new_license_id} for song {$song_id} (type: {$license_type}, nft: " . ($include_nft ? 'yes' : 'no') . ")");
+
+            // Queue NFT minting if selected
+            if ($include_nft && !empty($wallet_address)) {
+                fml_queue_license_nft_minting($new_license_id, $wallet_address);
+            }
+        }
+    }
+
+    // Clear user's cart after successful checkout
+    if ($user_id) {
+        delete_user_meta($user_id, 'fml_cart');
+    }
+
+    // Clean up transient
+    delete_transient('fml_checkout_' . $session['id']);
+
+    // Send email notification
+    $user = get_user_by('id', $user_id);
+    if ($user && !empty($licenses_created)) {
+        $license_count = count($licenses_created);
+        $nft_count = count(array_filter($licenses_created, function($l) { return $l['include_nft']; }));
+
+        $email_body = "Your Sync.Land license purchase has been processed.\n\n";
+        $email_body .= "Licenses Created: {$license_count}\n";
+        if ($nft_count > 0) {
+            $email_body .= "NFT Verifications: {$nft_count} (minting in progress)\n";
+        }
+        $email_body .= "Project: {$project_name}\n\n";
+        $email_body .= "View all your licenses: " . home_url('/account/my-licenses/') . "\n\n";
+        $email_body .= "Thank you for using Sync.Land!";
+
+        wp_mail(
+            $user->user_email,
+            "Your Sync.Land Licenses ({$license_count} " . ($license_count === 1 ? 'license' : 'licenses') . ")",
+            $email_body
+        );
+    }
+}
+
+/**
+ * Queue NFT minting for a license (async processing)
+ */
+function fml_queue_license_nft_minting($license_id, $wallet_address) {
+    // Schedule NFT minting as a background task
+    wp_schedule_single_event(time() + 30, 'fml_mint_license_nft_async', [$license_id, $wallet_address]);
+
+    error_log("Queued NFT minting for license {$license_id} to wallet {$wallet_address}");
+}
+
+// Register the async minting action
+add_action('fml_mint_license_nft_async', 'fml_process_queued_nft_minting', 10, 2);
+
+function fml_process_queued_nft_minting($license_id, $wallet_address) {
+    error_log("Processing queued NFT minting for license {$license_id}");
+
+    // Call the minting function from nmkr.php
+    if (function_exists('fml_mint_license_nft')) {
+        $result = fml_mint_license_nft($license_id, $wallet_address);
+
+        if ($result['success']) {
+            error_log("NFT minted successfully for license {$license_id}");
+        } else {
+            error_log("NFT minting failed for license {$license_id}: " . ($result['error'] ?? 'Unknown error'));
+
+            // Update license status to reflect failure
+            $license_pod = pods('license', $license_id);
+            if ($license_pod && $license_pod->exists()) {
+                $license_pod->save(['nft_status' => 'failed']);
+            }
+        }
+    } else {
+        error_log("fml_mint_license_nft function not available");
+    }
 }
