@@ -203,185 +203,15 @@ add_shortcode('nmkr_pay', function() {
 /**
  * Mint a license as an NFT
  *
+ * This function now delegates to the enhanced IPFS-enabled minting function.
+ *
  * @param int    $license_id     The license post ID
  * @param string $wallet_address The recipient's Cardano wallet address
  * @return array Result with success status and data/error
  */
 function fml_mint_license_nft($license_id, $wallet_address = '') {
-    // Validate license exists
-    $license_pod = pods('license', $license_id);
-    if (!$license_pod || !$license_pod->exists()) {
-        return ['success' => false, 'error' => 'License not found'];
-    }
-
-    // Get license data
-    $license_url = $license_pod->field('license_url');
-    $licensor = $license_pod->field('licensor');
-    $project = $license_pod->field('project');
-    $datetime = $license_pod->field('datetime');
-    $legal_name = $license_pod->field('legal_name');
-    $description_of_usage = $license_pod->field('description_of_usage');
-
-    // Get related song data
-    $song_data = $license_pod->field('song');
-    if (empty($song_data)) {
-        return ['success' => false, 'error' => 'No song associated with license'];
-    }
-
-    $song_id = is_array($song_data) ? $song_data['ID'] : $song_data;
-    $song_pod = pods('song', $song_id);
-
-    if (!$song_pod || !$song_pod->exists()) {
-        return ['success' => false, 'error' => 'Associated song not found'];
-    }
-
-    $song_title = $song_pod->field('post_title');
-
-    // Get artist from song
-    $artist_data = $song_pod->field('artist');
-    $artist_name = 'Unknown Artist';
-    if (!empty($artist_data)) {
-        $artist_id = is_array($artist_data) ? $artist_data['ID'] : $artist_data;
-        $artist_pod = pods('artist', $artist_id);
-        if ($artist_pod && $artist_pod->exists()) {
-            $artist_name = $artist_pod->field('post_title');
-        }
-    }
-
-    // Get song image for NFT visual
-    $song_image = get_the_post_thumbnail_url($song_id, 'full');
-    if (empty($song_image)) {
-        // Fallback to Sync.Land logo
-        $song_image = 'https://www.sync.land/wp-content/uploads/2024/06/cropped-SyncLand-Logo-optimized-150x150.png';
-    }
-
-    // Load NMKR credentials from wp-config.php
-    $api_key = FML_NMKR_API_KEY;
-    $project_uid = FML_NMKR_PROJECT_UID;
-    $policy_id = FML_NMKR_POLICY_ID;
-    $api_url = FML_NMKR_API_URL . "/v2/UploadNft/{$project_uid}";
-
-    // Generate unique token name
-    $token_name = 'SyncLicense_' . $license_id . '_' . time();
-
-    // Format datetime for display
-    $issue_date = !empty($datetime) ? date('Y-m-d', strtotime($datetime)) : date('Y-m-d');
-
-    // Build CIP-25 compliant metadata
-    $metadata = [
-        '721' => [
-            $policy_id => [
-                $token_name => [
-                    // Required CIP-25 fields
-                    'name' => "Sync License: {$artist_name} - {$song_title}",
-                    'image' => $song_image,
-                    'mediaType' => 'image/png',
-
-                    // License-specific metadata
-                    'License PDF' => $license_url,
-                    'License Type' => 'CC-BY 4.0',
-                    'Issue Date' => $issue_date,
-
-                    // Song/Artist info
-                    'Song' => $song_title,
-                    'Artist' => $artist_name,
-                    'Composer' => $artist_name,
-
-                    // Parties
-                    'Licensor' => $licensor,
-                    'Licensee' => $legal_name ?: $licensor,
-
-                    // Terms
-                    'Project' => $project,
-                    'Usage Description' => $description_of_usage ?: 'General use',
-                    'Territory' => 'Worldwide',
-                    'Term' => 'Perpetual',
-                    'Media Types' => 'All Media',
-
-                    // Marketplace info
-                    'Marketplace' => 'Sync.Land',
-                    'Marketplace URL' => 'https://sync.land',
-                    'Marketplace Owner' => 'Awen LLC',
-
-                    // Description array for longer text
-                    'description' => [
-                        "Music sync license NFT for '{$song_title}' by {$artist_name}.",
-                        "Licensed under Creative Commons Attribution 4.0 International.",
-                        "Project: {$project}"
-                    ]
-                ]
-            ],
-            'version' => '1.0'
-        ]
-    ];
-
-    // Prepare NMKR request
-    $data = [
-        'nftName' => $token_name,
-        'contentType' => 'image/png',
-        'fileAsUrl' => $song_image,
-        'previewFileAsUrl' => $image_url, // Add this
-        'metadata' => $metadata
-    ];
-
-    // Add receiver address if provided
-    if (!empty($wallet_address)) {
-        $data['receiverAddress'] = $wallet_address;
-    }
-
-    // Make API request
-    $ch = curl_init($api_url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
-    curl_setopt($ch, CURLOPT_HTTPHEADER, [
-        'Authorization: Bearer ' . $api_key,
-        'Content-Type: application/json'
-    ]);
-
-    $response = curl_exec($ch);
-    $http_code = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-    $curl_error = curl_error($ch);
-    curl_close($ch);
-
-    if ($http_code == 200 || $http_code == 201) {
-        $result = json_decode($response, true);
-
-        // Update license pod with NFT data
-        $license_pod->save([
-            'nft_status' => 'minted',
-            'nft_asset_id' => $result['nftId'] ?? $token_name,
-            'nft_transaction_hash' => $result['transactionId'] ?? '',
-            'nft_minted_at' => current_time('mysql'),
-            'wallet_address' => $wallet_address
-        ]);
-
-        return [
-            'success' => true,
-            'message' => 'License NFT minted successfully',
-            'data' => [
-                'nft_id' => $result['nftId'] ?? $token_name,
-                'transaction_id' => $result['transactionId'] ?? null,
-                'token_name' => $token_name,
-                'license_id' => $license_id
-            ]
-        ];
-    } else {
-        // Update license status to failed
-        $license_pod->save([
-            'nft_status' => 'failed'
-        ]);
-
-        error_log("NMKR License NFT mint failed: HTTP {$http_code} - {$response}");
-
-        return [
-            'success' => false,
-            'error' => 'NFT minting failed',
-            'http_code' => $http_code,
-            'response' => $response,
-            'curl_error' => $curl_error
-        ];
-    }
+    // Delegate to the enhanced IPFS-enabled minting function
+    return fml_mint_license_nft_with_ipfs($license_id, $wallet_address);
 }
 
 /**
@@ -498,7 +328,484 @@ function fml_get_license_nft_status(WP_REST_Request $request) {
             'nft_asset_id' => $license_pod->field('nft_asset_id') ?: null,
             'nft_transaction_hash' => $license_pod->field('nft_transaction_hash') ?: null,
             'nft_minted_at' => $license_pod->field('nft_minted_at') ?: null,
+            'nft_ipfs_hash' => $license_pod->field('nft_ipfs_hash') ?: null,
+            'nft_policy_id' => $license_pod->field('nft_policy_id') ?: null,
+            'nft_asset_name' => $license_pod->field('nft_asset_name') ?: null,
             'wallet_address' => $license_pod->field('wallet_address') ?: null
         ]
     ], 200);
+}
+
+
+/**
+ * ============================================================================
+ * IPFS UPLOAD FOR LICENSE PDFs
+ * ============================================================================
+ */
+
+/**
+ * Upload a license PDF to IPFS via NMKR
+ *
+ * @param string $pdf_url The URL of the license PDF to upload
+ * @param string $filename The filename to use on IPFS
+ * @return array Result with IPFS hash or error
+ */
+function fml_upload_license_pdf_to_ipfs($pdf_url, $filename = '') {
+    $creds = fml_get_nmkr_credentials();
+    if (!$creds['success']) {
+        return ['success' => false, 'error' => $creds['error']];
+    }
+
+    // Download PDF content
+    $pdf_response = wp_remote_get($pdf_url, ['timeout' => 30]);
+    if (is_wp_error($pdf_response)) {
+        return ['success' => false, 'error' => 'Failed to download PDF: ' . $pdf_response->get_error_message()];
+    }
+
+    $pdf_content = wp_remote_retrieve_body($pdf_response);
+    if (empty($pdf_content)) {
+        return ['success' => false, 'error' => 'PDF content is empty'];
+    }
+
+    // Convert to base64
+    $pdf_base64 = base64_encode($pdf_content);
+
+    // Generate filename if not provided
+    if (empty($filename)) {
+        $filename = 'license_' . time() . '.pdf';
+    }
+
+    // Upload to IPFS via NMKR API
+    $api_url = $creds['api_url'] . '/v2/UploadToIpfs';
+
+    $data = [
+        'fileFromBase64' => $pdf_base64,
+        'fileName' => $filename,
+        'mimeType' => 'application/pdf'
+    ];
+
+    $response = wp_remote_post($api_url, [
+        'headers' => [
+            'Authorization' => 'Bearer ' . $creds['api_key'],
+            'Content-Type' => 'application/json'
+        ],
+        'body' => json_encode($data),
+        'timeout' => 60
+    ]);
+
+    if (is_wp_error($response)) {
+        return ['success' => false, 'error' => 'IPFS upload failed: ' . $response->get_error_message()];
+    }
+
+    $http_code = wp_remote_retrieve_response_code($response);
+    $body = json_decode(wp_remote_retrieve_body($response), true);
+
+    if ($http_code == 200 || $http_code == 201) {
+        return [
+            'success' => true,
+            'ipfs_hash' => $body['ipfsHash'] ?? $body['ipfs_hash'] ?? null,
+            'ipfs_url' => 'ipfs://' . ($body['ipfsHash'] ?? $body['ipfs_hash'] ?? ''),
+            'gateway_url' => 'https://ipfs.io/ipfs/' . ($body['ipfsHash'] ?? $body['ipfs_hash'] ?? '')
+        ];
+    } else {
+        return [
+            'success' => false,
+            'error' => 'IPFS upload failed',
+            'http_code' => $http_code,
+            'response' => $body
+        ];
+    }
+}
+
+
+/**
+ * ============================================================================
+ * ENHANCED LICENSE NFT MINTING WITH IPFS
+ * ============================================================================
+ */
+
+/**
+ * Mint a license as an NFT with IPFS-hosted PDF
+ *
+ * @param int    $license_id     The license post ID
+ * @param string $wallet_address The recipient's Cardano wallet address
+ * @return array Result with success status and data/error
+ */
+function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
+    // Validate license exists
+    $license_pod = pods('license', $license_id);
+    if (!$license_pod || !$license_pod->exists()) {
+        return ['success' => false, 'error' => 'License not found'];
+    }
+
+    // Check NMKR credentials
+    $creds = fml_get_nmkr_credentials();
+    if (!$creds['success']) {
+        return ['success' => false, 'error' => $creds['error']];
+    }
+
+    // Get license data
+    $license_url = $license_pod->field('license_url');
+    $licensor = $license_pod->field('licensor');
+    $project = $license_pod->field('project');
+    $datetime = $license_pod->field('datetime');
+    $legal_name = $license_pod->field('legal_name');
+    $license_type = $license_pod->field('license_type') ?: 'cc_by';
+
+    // Get related song data
+    $song_data = $license_pod->field('song');
+    if (empty($song_data)) {
+        return ['success' => false, 'error' => 'No song associated with license'];
+    }
+
+    $song_id = is_array($song_data) ? $song_data['ID'] : $song_data;
+    $song_pod = pods('song', $song_id);
+
+    if (!$song_pod || !$song_pod->exists()) {
+        return ['success' => false, 'error' => 'Associated song not found'];
+    }
+
+    $song_title = $song_pod->field('post_title');
+
+    // Get artist from song
+    $artist_data = $song_pod->field('artist');
+    $artist_name = 'Unknown Artist';
+    if (!empty($artist_data)) {
+        $artist_id = is_array($artist_data) ? $artist_data['ID'] : $artist_data;
+        $artist_pod = pods('artist', $artist_id);
+        if ($artist_pod && $artist_pod->exists()) {
+            $artist_name = $artist_pod->field('post_title');
+        }
+    }
+
+    // Upload license PDF to IPFS first
+    $ipfs_filename = sanitize_file_name("SyncLicense_{$artist_name}_{$song_title}_{$license_id}.pdf");
+    $ipfs_result = fml_upload_license_pdf_to_ipfs($license_url, $ipfs_filename);
+
+    $ipfs_hash = null;
+    $ipfs_url = null;
+
+    if ($ipfs_result['success']) {
+        $ipfs_hash = $ipfs_result['ipfs_hash'];
+        $ipfs_url = $ipfs_result['ipfs_url'];
+        error_log("License PDF uploaded to IPFS: {$ipfs_hash}");
+    } else {
+        error_log("IPFS upload failed for license {$license_id}: " . ($ipfs_result['error'] ?? 'Unknown error'));
+        // Continue with minting using direct URL as fallback
+    }
+
+    // Get song image for NFT visual
+    $album_data = $song_pod->field('album');
+    $song_image = '';
+    if (!empty($album_data)) {
+        $album_id = is_array($album_data) ? $album_data['ID'] : $album_data;
+        $song_image = get_the_post_thumbnail_url($album_id, 'full');
+    }
+    if (empty($song_image)) {
+        $song_image = 'https://www.sync.land/wp-content/uploads/2024/06/cropped-SyncLand-Logo-optimized-150x150.png';
+    }
+
+    // Generate unique token name
+    $token_name = 'SyncLicense_' . $license_id . '_' . time();
+
+    // Format datetime for display
+    $issue_date = !empty($datetime) ? date('Y-m-d', strtotime($datetime)) : date('Y-m-d');
+
+    // Determine license type label
+    $license_type_label = ($license_type === 'non_exclusive') ? 'Non-Exclusive Commercial' : 'CC-BY 4.0';
+
+    // Build CIP-25 compliant metadata
+    $metadata = [
+        '721' => [
+            $creds['policy_id'] => [
+                $token_name => [
+                    // Required CIP-25 fields
+                    'name' => "Sync License: {$artist_name} - {$song_title}",
+                    'image' => $song_image,
+                    'mediaType' => 'image/png',
+
+                    // Files array with license PDF
+                    'files' => [
+                        [
+                            'name' => 'License PDF',
+                            'src' => $ipfs_url ?: $license_url,
+                            'mediaType' => 'application/pdf'
+                        ]
+                    ],
+
+                    // License-specific metadata
+                    'License Type' => $license_type_label,
+                    'License URL' => $license_url,
+                    'Issue Date' => $issue_date,
+
+                    // Song/Artist info
+                    'Song' => $song_title,
+                    'Artist' => $artist_name,
+
+                    // Parties
+                    'Licensee' => $legal_name ?: $licensor,
+
+                    // Terms
+                    'Project' => $project ?: 'General Use',
+
+                    // Marketplace info
+                    'Marketplace' => 'Sync.Land',
+                    'Blockchain Verified' => true,
+
+                    // Description
+                    'description' => [
+                        "Music sync license NFT for '{$song_title}' by {$artist_name}.",
+                        "License Type: {$license_type_label}",
+                        "Verified on Cardano blockchain via Sync.Land"
+                    ]
+                ]
+            ],
+            'version' => '1.0'
+        ]
+    ];
+
+    // Prepare NMKR MintAndSendSpecific request
+    $mint_api_url = $creds['api_url'] . '/v2/MintAndSendSpecific/' . $creds['project_uid'];
+
+    $mint_data = [
+        'tokenname' => $token_name,
+        'displayname' => "Sync License: {$artist_name} - {$song_title}",
+        'previewImageNft' => [
+            'mimetype' => 'image/png',
+            'fileFromUrl' => $song_image
+        ],
+        'subfiles' => [
+            [
+                'subfile' => [
+                    'mimetype' => 'application/pdf',
+                    'fileFromUrl' => $license_url
+                ]
+            ]
+        ],
+        'metadataOverride' => $metadata,
+        'receiveraddress' => $wallet_address,
+        'count' => 1
+    ];
+
+    // Make NMKR API request
+    $response = wp_remote_post($mint_api_url, [
+        'headers' => [
+            'Authorization' => 'Bearer ' . $creds['api_key'],
+            'Content-Type' => 'application/json'
+        ],
+        'body' => json_encode($mint_data),
+        'timeout' => 120
+    ]);
+
+    if (is_wp_error($response)) {
+        $license_pod->save(['nft_status' => 'failed']);
+        return ['success' => false, 'error' => 'Minting request failed: ' . $response->get_error_message()];
+    }
+
+    $http_code = wp_remote_retrieve_response_code($response);
+    $body = json_decode(wp_remote_retrieve_body($response), true);
+
+    if ($http_code == 200 || $http_code == 201) {
+        // Update license pod with NFT data
+        $license_pod->save([
+            'nft_status' => 'minted',
+            'nft_asset_id' => $body['nftId'] ?? $token_name,
+            'nft_transaction_hash' => $body['transactionId'] ?? '',
+            'nft_minted_at' => current_time('mysql'),
+            'nft_ipfs_hash' => $ipfs_hash,
+            'nft_policy_id' => $creds['policy_id'],
+            'nft_asset_name' => $token_name,
+            'wallet_address' => $wallet_address
+        ]);
+
+        return [
+            'success' => true,
+            'message' => 'License NFT minted successfully',
+            'data' => [
+                'nft_id' => $body['nftId'] ?? $token_name,
+                'transaction_id' => $body['transactionId'] ?? null,
+                'token_name' => $token_name,
+                'license_id' => $license_id,
+                'ipfs_hash' => $ipfs_hash,
+                'policy_id' => $creds['policy_id']
+            ]
+        ];
+    } else {
+        // Update license status to failed
+        $license_pod->save(['nft_status' => 'failed']);
+
+        error_log("NMKR License NFT mint failed: HTTP {$http_code} - " . json_encode($body));
+
+        return [
+            'success' => false,
+            'error' => 'NFT minting failed',
+            'http_code' => $http_code,
+            'response' => $body
+        ];
+    }
+}
+
+
+/**
+ * ============================================================================
+ * LICENSE VERIFICATION ENDPOINT
+ * ============================================================================
+ */
+
+add_action('rest_api_init', function() {
+    register_rest_route('FML/v1', '/licenses/(?P<id>\d+)/verify', [
+        'methods' => 'GET',
+        'callback' => 'fml_verify_license_nft',
+        'permission_callback' => '__return_true',
+        'args' => [
+            'id' => [
+                'required' => true,
+                'validate_callback' => function($param) {
+                    return is_numeric($param);
+                }
+            ]
+        ]
+    ]);
+});
+
+/**
+ * Verify NFT status for a license
+ */
+function fml_verify_license_nft(WP_REST_Request $request) {
+    $license_id = $request->get_param('id');
+
+    $license_pod = pods('license', $license_id);
+    if (!$license_pod || !$license_pod->exists()) {
+        return new WP_REST_Response(['success' => false, 'error' => 'License not found'], 404);
+    }
+
+    $nft_status = $license_pod->field('nft_status') ?: 'none';
+    $nft_transaction_hash = $license_pod->field('nft_transaction_hash');
+    $nft_ipfs_hash = $license_pod->field('nft_ipfs_hash');
+    $nft_policy_id = $license_pod->field('nft_policy_id');
+    $nft_asset_name = $license_pod->field('nft_asset_name');
+    $license_type = $license_pod->field('license_type') ?: 'cc_by';
+
+    // Determine verification status
+    $is_verified = ($nft_status === 'minted' && !empty($nft_transaction_hash));
+
+    // Build verification response
+    $verification = [
+        'license_id' => intval($license_id),
+        'license_type' => $license_type,
+        'license_type_label' => ($license_type === 'non_exclusive') ? 'Non-Exclusive Commercial' : 'CC-BY 4.0',
+        'nft_verified' => $is_verified,
+        'nft_status' => $nft_status,
+        'verification_badge' => $is_verified ? 'NFT Verified' : 'Standard License'
+    ];
+
+    if ($is_verified) {
+        $verification['blockchain'] = [
+            'network' => 'Cardano',
+            'transaction_hash' => $nft_transaction_hash,
+            'policy_id' => $nft_policy_id,
+            'asset_name' => $nft_asset_name,
+            'explorer_url' => "https://cardanoscan.io/transaction/{$nft_transaction_hash}"
+        ];
+
+        if ($nft_ipfs_hash) {
+            $verification['ipfs'] = [
+                'hash' => $nft_ipfs_hash,
+                'url' => "ipfs://{$nft_ipfs_hash}",
+                'gateway_url' => "https://ipfs.io/ipfs/{$nft_ipfs_hash}"
+            ];
+        }
+    }
+
+    // Add license details
+    $song_data = $license_pod->field('song');
+    if (!empty($song_data)) {
+        $song_id = is_array($song_data) ? $song_data['ID'] : $song_data;
+        $song_pod = pods('song', $song_id);
+        if ($song_pod && $song_pod->exists()) {
+            $verification['song'] = [
+                'id' => $song_id,
+                'title' => $song_pod->field('post_title')
+            ];
+
+            $artist_data = $song_pod->field('artist');
+            if (!empty($artist_data)) {
+                $artist_id = is_array($artist_data) ? $artist_data['ID'] : $artist_data;
+                $artist_pod = pods('artist', $artist_id);
+                if ($artist_pod && $artist_pod->exists()) {
+                    $verification['artist'] = [
+                        'id' => $artist_id,
+                        'name' => $artist_pod->field('post_title')
+                    ];
+                }
+            }
+        }
+    }
+
+    $verification['licensee'] = $license_pod->field('legal_name') ?: $license_pod->field('licensor');
+    $verification['issue_date'] = $license_pod->field('datetime');
+    $verification['license_url'] = $license_pod->field('license_url');
+
+    return new WP_REST_Response([
+        'success' => true,
+        'data' => $verification
+    ], 200);
+}
+
+
+/**
+ * ============================================================================
+ * NFT MINTING RETRY LOGIC
+ * ============================================================================
+ */
+
+/**
+ * Retry failed NFT minting
+ */
+function fml_retry_failed_nft_minting($license_id) {
+    $license_pod = pods('license', $license_id);
+    if (!$license_pod || !$license_pod->exists()) {
+        return ['success' => false, 'error' => 'License not found'];
+    }
+
+    $nft_status = $license_pod->field('nft_status');
+    if ($nft_status !== 'failed' && $nft_status !== 'pending') {
+        return ['success' => false, 'error' => 'License NFT status is not failed or pending'];
+    }
+
+    $wallet_address = $license_pod->field('wallet_address');
+    if (empty($wallet_address)) {
+        return ['success' => false, 'error' => 'No wallet address on record'];
+    }
+
+    // Update status to pending
+    $license_pod->save(['nft_status' => 'pending']);
+
+    // Attempt minting with IPFS
+    return fml_mint_license_nft_with_ipfs($license_id, $wallet_address);
+}
+
+/**
+ * Admin action to retry NFT minting
+ */
+add_action('wp_ajax_fml_retry_nft_minting', 'fml_admin_retry_nft_minting');
+function fml_admin_retry_nft_minting() {
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(['message' => 'Unauthorized']);
+        return;
+    }
+
+    $license_id = intval($_POST['license_id'] ?? 0);
+    if (!$license_id) {
+        wp_send_json_error(['message' => 'License ID required']);
+        return;
+    }
+
+    $result = fml_retry_failed_nft_minting($license_id);
+
+    if ($result['success']) {
+        wp_send_json_success($result);
+    } else {
+        wp_send_json_error($result);
+    }
 }

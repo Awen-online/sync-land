@@ -79,7 +79,7 @@ add_action('wp_body_open', 'add_loading_screen');
 //
 add_action('wp_enqueue_scripts', function() {
     
-    $style_version = '1.329'; // Change this to your desired version number
+    $style_version = '1.330'; // Change this to your desired version number
     
     //
     //ADD CSS
@@ -94,6 +94,7 @@ add_action('wp_enqueue_scripts', function() {
     wp_enqueue_style('datatables-style', get_stylesheet_directory_uri() . '/assets/css/dataTables.css', array(), $style_version);
     wp_enqueue_style('magnific-popup-css', 'https://cdn.jsdelivr.net/npm/magnific-popup@1.1.0/dist/magnific-popup.css', array(), $style_version);
     wp_enqueue_style('fml-search-style', get_stylesheet_directory_uri() . '/assets/css/search.css', array(), $style_version);
+    wp_enqueue_style('fml-cart-style', get_stylesheet_directory_uri() . '/assets/css/cart.css', array(), $style_version);
 
     //
     //ADD JS
@@ -134,6 +135,7 @@ add_action('wp_enqueue_scripts', function() {
     wp_enqueue_script('threejs-background',get_stylesheet_directory_uri() . '/assets/js/background-particles.js', array('three-js'), $style_version, true);
     wp_enqueue_script('inner-planet', get_stylesheet_directory_uri() . '/assets/js/inner-planet.js', array('three-js'), $style_version, true); // Enqueue the new script
     wp_enqueue_script('fml-search', get_stylesheet_directory_uri() . '/assets/js/search.js', array(), $style_version, true);
+    wp_enqueue_script('fml-cart', get_stylesheet_directory_uri() . '/assets/js/cart.js', array('jquery'), $style_version, true);
 
 
     // Add type="module" to the script tag
@@ -202,3 +204,7 @@ require get_stylesheet_directory().'/functions/api/playlists.php';
 require get_stylesheet_directory().'/functions/api/stripe.php';
 require get_stylesheet_directory().'/functions/api/external.php';
 require get_stylesheet_directory().'/functions/api/search.php';
+
+// Shopping Cart System
+require get_stylesheet_directory().'/functions/cart.php';
+require get_stylesheet_directory().'/functions/shortcodes/cart-shortcodes.php';
