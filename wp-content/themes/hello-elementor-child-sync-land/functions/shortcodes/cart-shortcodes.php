@@ -35,9 +35,27 @@ function fml_cart_shortcode($atts) {
     $nft_fee = intval(get_option('fml_nft_minting_fee', 500));
     $license_price = intval(get_option('fml_non_exclusive_license_price', 4900));
 
+    // Check test/preprod mode status
+    $stripe_mode = function_exists('fml_get_stripe_mode') ? fml_get_stripe_mode() : 'test';
+    $nmkr_mode = function_exists('fml_get_nmkr_mode') ? fml_get_nmkr_mode() : 'preprod';
+    $is_test_mode = ($stripe_mode === 'test' || $nmkr_mode === 'preprod');
+
     ob_start();
     ?>
     <div id="fml-cart" class="fml-cart-container" data-nonce="<?php echo wp_create_nonce('wp_rest'); ?>">
+        <?php if ($is_test_mode): ?>
+        <div class="fml-test-mode-banner">
+            <i class="fas fa-flask"></i>
+            <strong>TEST MODE</strong> -
+            <?php
+            $test_parts = [];
+            if ($stripe_mode === 'test') $test_parts[] = 'Stripe (Test)';
+            if ($nmkr_mode === 'preprod') $test_parts[] = 'NMKR (Preprod)';
+            echo implode(' &amp; ', $test_parts);
+            ?>
+            <span class="fml-test-mode-note">No real charges will be made. Use test cards and preprod wallet addresses.</span>
+        </div>
+        <?php endif; ?>
         <?php if (empty($summary['items'])): ?>
             <?php if ($atts['show_empty_message'] === 'true'): ?>
             <div class="fml-cart-empty">
@@ -96,7 +114,7 @@ function fml_cart_shortcode($atts) {
                             <div class="fml-wallet-input <?php echo $item['include_nft'] ? '' : 'hidden'; ?>">
                                 <input type="text" class="fml-wallet-address" data-song-id="<?php echo $item['song_id']; ?>"
                                        value="<?php echo esc_attr($item['wallet_address']); ?>"
-                                       placeholder="Enter Cardano wallet address (addr1...)">
+                                       placeholder="<?php echo ($nmkr_mode === 'preprod') ? 'Enter Cardano preprod address (addr_test1...)' : 'Enter Cardano wallet address (addr1...)'; ?>">
                                 <span class="fml-wallet-validation"></span>
                             </div>
                         </div>
