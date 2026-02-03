@@ -159,12 +159,15 @@ function fml_get_nmkr_credentials() {
 /**
  * Verify NMKR connection by making a test API call
  */
-function fml_verify_nmkr_connection($api_key = null, $api_url = null) {
+function fml_verify_nmkr_connection($api_key = null, $api_url = null, $project_uid = null) {
     if ($api_key === null) {
         $api_key = fml_get_nmkr_api_key();
     }
     if ($api_url === null) {
         $api_url = fml_get_nmkr_api_url();
+    }
+    if ($project_uid === null) {
+        $project_uid = fml_get_nmkr_project_uid();
     }
 
     if (empty($api_key)) {
@@ -174,23 +177,38 @@ function fml_verify_nmkr_connection($api_key = null, $api_url = null) {
         ];
     }
 
-    // Make a simple API call to verify the key works (get account info)
-    $response = wp_remote_get($api_url . '/v2/GetCounts', [
+    // Use GetCounts with project UID if available, otherwise try GetWalletValidationAddress
+    if (!empty($project_uid)) {
+        $endpoint = $api_url . '/v2/GetCounts/' . $project_uid;
+    } else {
+        // Fallback endpoint that doesn't require project UID
+        $endpoint = $api_url . '/v2/GetWalletValidationAddress';
+    }
+
+    $response = wp_remote_get($endpoint, [
         'headers' => [
-            'Authorization' => 'Bearer ' . $api_key
+            'Authorization' => 'Bearer ' . $api_key,
+            'Content-Type' => 'application/json'
         ],
-        'timeout' => 15
+        'timeout' => 20,
+        'sslverify' => true
     ]);
 
     if (is_wp_error($response)) {
         return [
             'success' => false,
-            'error' => $response->get_error_message()
+            'error' => 'Connection error: ' . $response->get_error_message()
         ];
     }
 
     $status_code = wp_remote_retrieve_response_code($response);
-    $body = json_decode(wp_remote_retrieve_body($response), true);
+    $raw_body = wp_remote_retrieve_body($response);
+    $body = json_decode($raw_body, true);
+
+    // Log for debugging
+    error_log("NMKR API Verify - Endpoint: {$endpoint}");
+    error_log("NMKR API Verify - Status: {$status_code}");
+    error_log("NMKR API Verify - Response: " . substr($raw_body, 0, 500));
 
     if ($status_code === 200) {
         // Determine if preprod or mainnet based on URL
@@ -199,15 +217,32 @@ function fml_verify_nmkr_connection($api_key = null, $api_url = null) {
         return [
             'success' => true,
             'mode' => $is_preprod ? 'preprod' : 'mainnet',
-            'message' => 'Connected successfully' . ($is_preprod ? ' (Preprod/Test)' : ' (Mainnet/Live)'),
-            'data' => $body
+            'message' => 'Connected successfully' . ($is_preprod ? ' (Preprod/Test)' : ' (Mainnet/Live)')
         ];
     } else {
-        $error_message = $body['message'] ?? $body['error'] ?? 'Invalid API key or connection failed';
+        // Try to get a meaningful error message
+        $error_message = 'HTTP ' . $status_code;
+        if (is_array($body)) {
+            if (isset($body['message'])) {
+                $error_message = $body['message'];
+            } elseif (isset($body['error'])) {
+                $error_message = $body['error'];
+            } elseif (isset($body['title'])) {
+                $error_message = $body['title'];
+            }
+        } elseif ($status_code === 401) {
+            $error_message = 'Unauthorized - check your API key';
+        } elseif ($status_code === 403) {
+            $error_message = 'Forbidden - API key may not have required permissions';
+        } elseif ($status_code === 404) {
+            $error_message = 'Endpoint not found - check Project UID';
+        }
+
         return [
             'success' => false,
             'error' => $error_message,
-            'http_code' => $status_code
+            'http_code' => $status_code,
+            'debug' => substr($raw_body, 0, 200)
         ];
     }
 }
@@ -230,19 +265,22 @@ function fml_ajax_verify_nmkr_connection() {
     if ($key_type === 'preprod') {
         $api_key = sanitize_text_field($_POST['preprod_api_key'] ?? '');
         $api_url = 'https://studio-api.preprod.nmkr.io';
+        $project_uid = sanitize_text_field($_POST['preprod_project_uid'] ?? get_option('fml_nmkr_preprod_project_uid', ''));
     } elseif ($key_type === 'mainnet') {
         $api_key = sanitize_text_field($_POST['mainnet_api_key'] ?? '');
         $api_url = 'https://studio-api.nmkr.io';
+        $project_uid = sanitize_text_field($_POST['mainnet_project_uid'] ?? get_option('fml_nmkr_mainnet_project_uid', ''));
     } else {
         $api_key = fml_get_nmkr_api_key();
         $api_url = fml_get_nmkr_api_url();
+        $project_uid = fml_get_nmkr_project_uid();
     }
 
     if (empty($api_key)) {
         wp_send_json_error(['message' => 'No API key provided']);
     }
 
-    $result = fml_verify_nmkr_connection($api_key, $api_url);
+    $result = fml_verify_nmkr_connection($api_key, $api_url, $project_uid);
 
     if ($result['success']) {
         wp_send_json_success([
@@ -250,7 +288,12 @@ function fml_ajax_verify_nmkr_connection() {
             'mode' => $result['mode']
         ]);
     } else {
-        wp_send_json_error(['message' => $result['error']]);
+        // Include debug info if available
+        $error_msg = $result['error'];
+        if (isset($result['debug']) && !empty($result['debug'])) {
+            error_log("NMKR Verify Debug: " . $result['debug']);
+        }
+        wp_send_json_error(['message' => $error_msg]);
     }
 }
 

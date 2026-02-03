@@ -1240,9 +1240,15 @@ function fml_licensing_settings_page() {
         $('.fml-verify-nmkr').on('click', function() {
             var keyType = $(this).data('key-type');
             var $status = $('#fml-nmkr-' + keyType + '-status');
-            var apiKey = keyType === 'preprod'
-                ? $('#fml_nmkr_preprod_api_key').val()
-                : $('#fml_nmkr_mainnet_api_key').val();
+            var apiKey, projectUid;
+
+            if (keyType === 'preprod') {
+                apiKey = $('#fml_nmkr_preprod_api_key').val();
+                projectUid = $('#fml_nmkr_preprod_project_uid').val();
+            } else {
+                apiKey = $('#fml_nmkr_mainnet_api_key').val();
+                projectUid = $('#fml_nmkr_mainnet_project_uid').val();
+            }
 
             if (!apiKey) {
                 $status.removeClass('success loading').addClass('error').text('No key entered');
@@ -1256,7 +1262,9 @@ function fml_licensing_settings_page() {
                 nonce: '<?php echo wp_create_nonce('fml_licensing_settings'); ?>',
                 key_type: keyType,
                 preprod_api_key: keyType === 'preprod' ? apiKey : '',
-                mainnet_api_key: keyType === 'mainnet' ? apiKey : ''
+                mainnet_api_key: keyType === 'mainnet' ? apiKey : '',
+                preprod_project_uid: keyType === 'preprod' ? projectUid : '',
+                mainnet_project_uid: keyType === 'mainnet' ? projectUid : ''
             }, function(response) {
                 if (response.success) {
                     $status.removeClass('error loading').addClass('success').text('✓ ' + response.data.message);
