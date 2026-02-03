@@ -518,17 +518,19 @@
 
     /**
      * Validate Cardano wallet address
+     * Mainnet addresses start with addr1 (typically 58-108 chars total)
+     * Testnet addresses start with addr_test1 (typically 63-113 chars total)
      */
     function validateCardanoAddress(address) {
         if (!address) return false;
 
         // Mainnet address (addr1...)
-        if (/^addr1[a-z0-9]{53,98}$/i.test(address)) {
+        if (/^addr1[a-z0-9]{50,150}$/i.test(address)) {
             return true;
         }
 
-        // Testnet address (addr_test1...)
-        if (/^addr_test1[a-z0-9]{50,95}$/i.test(address)) {
+        // Testnet/Preprod address (addr_test1...)
+        if (/^addr_test1[a-z0-9]{50,150}$/i.test(address)) {
             return true;
         }
 

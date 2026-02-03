@@ -44,6 +44,51 @@
 }
 
 /* ============================================================================
+   Test Mode Banner
+   ============================================================================ */
+.fml-test-mode-banner {
+    background: linear-gradient(135deg, #f0ad4e 0%, #ec971f 100%);
+    color: #000;
+    padding: 12px 20px;
+    border-radius: var(--fml-radius);
+    margin-bottom: 20px;
+    font-size: 0.95rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    box-shadow: 0 2px 10px rgba(240, 173, 78, 0.3);
+}
+
+.fml-test-mode-banner i {
+    font-size: 1.2rem;
+}
+
+.fml-test-mode-banner strong {
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.fml-test-mode-note {
+    font-size: 0.85rem;
+    opacity: 0.85;
+    margin-left: auto;
+}
+
+@media (max-width: 600px) {
+    .fml-test-mode-banner {
+        flex-direction: column;
+        text-align: center;
+    }
+
+    .fml-test-mode-note {
+        margin-left: 0;
+        margin-top: 5px;
+    }
+}
+
+/* ============================================================================
    Empty Cart
    ============================================================================ */
 .fml-cart-empty {
