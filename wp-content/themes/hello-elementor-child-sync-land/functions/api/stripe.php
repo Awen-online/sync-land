@@ -8,15 +8,147 @@
  * - CC-BY (Free) - Can be minted as NFT for blockchain verification (free)
  * - Non-Exclusive (Paid) - Commercial sync license purchased via Stripe
  *
- * Required wp-config.php constants:
- * - FML_STRIPE_SECRET_KEY (sk_live_... or sk_test_...)
- * - FML_STRIPE_WEBHOOK_SECRET (whsec_...)
- * - FML_STRIPE_PUBLISHABLE_KEY (pk_live_... or pk_test_...)
+ * Stripe API keys are managed in WordPress Admin > Settings > Sync.Land Licensing
+ * Supports both Test and Live modes with easy switching.
  */
 
 // Prevent direct access
 if (!defined('ABSPATH')) {
     exit;
+}
+
+/**
+ * ============================================================================
+ * STRIPE KEY MANAGEMENT
+ * ============================================================================
+ */
+
+/**
+ * Get current Stripe mode (test or live)
+ */
+function fml_get_stripe_mode() {
+    return get_option('fml_stripe_mode', 'test');
+}
+
+/**
+ * Check if Stripe is in live mode
+ */
+function fml_stripe_is_live() {
+    return fml_get_stripe_mode() === 'live';
+}
+
+/**
+ * Get active Stripe secret key based on current mode
+ * Falls back to wp-config.php constants for backwards compatibility
+ */
+function fml_get_stripe_secret_key() {
+    $mode = fml_get_stripe_mode();
+
+    if ($mode === 'live') {
+        $key = get_option('fml_stripe_live_secret_key', '');
+    } else {
+        $key = get_option('fml_stripe_test_secret_key', '');
+    }
+
+    // Fallback to constant if option is empty
+    if (empty($key) && defined('FML_STRIPE_SECRET_KEY')) {
+        $key = FML_STRIPE_SECRET_KEY;
+    }
+
+    return $key;
+}
+
+/**
+ * Get active Stripe publishable key based on current mode
+ */
+function fml_get_stripe_publishable_key() {
+    $mode = fml_get_stripe_mode();
+
+    if ($mode === 'live') {
+        $key = get_option('fml_stripe_live_publishable_key', '');
+    } else {
+        $key = get_option('fml_stripe_test_publishable_key', '');
+    }
+
+    // Fallback to constant if option is empty
+    if (empty($key) && defined('FML_STRIPE_PUBLISHABLE_KEY')) {
+        $key = FML_STRIPE_PUBLISHABLE_KEY;
+    }
+
+    return $key;
+}
+
+/**
+ * Get Stripe webhook secret
+ */
+function fml_get_stripe_webhook_secret() {
+    $key = get_option('fml_stripe_webhook_secret', '');
+
+    // Fallback to constant if option is empty
+    if (empty($key) && defined('FML_STRIPE_WEBHOOK_SECRET')) {
+        $key = FML_STRIPE_WEBHOOK_SECRET;
+    }
+
+    return $key;
+}
+
+/**
+ * Check if Stripe is properly configured
+ */
+function fml_stripe_is_configured() {
+    $secret_key = fml_get_stripe_secret_key();
+    return !empty($secret_key);
+}
+
+/**
+ * Verify Stripe connection by making a test API call
+ */
+function fml_verify_stripe_connection($secret_key = null) {
+    if ($secret_key === null) {
+        $secret_key = fml_get_stripe_secret_key();
+    }
+
+    if (empty($secret_key)) {
+        return [
+            'success' => false,
+            'error' => 'No API key provided'
+        ];
+    }
+
+    // Make a simple API call to verify the key works
+    $response = wp_remote_get('https://api.stripe.com/v1/balance', [
+        'headers' => [
+            'Authorization' => 'Bearer ' . $secret_key
+        ],
+        'timeout' => 15
+    ]);
+
+    if (is_wp_error($response)) {
+        return [
+            'success' => false,
+            'error' => $response->get_error_message()
+        ];
+    }
+
+    $status_code = wp_remote_retrieve_response_code($response);
+    $body = json_decode(wp_remote_retrieve_body($response), true);
+
+    if ($status_code === 200) {
+        // Determine if test or live mode based on key prefix
+        $is_test = strpos($secret_key, 'sk_test_') === 0;
+
+        return [
+            'success' => true,
+            'mode' => $is_test ? 'test' : 'live',
+            'message' => 'Connected successfully' . ($is_test ? ' (Test Mode)' : ' (Live Mode)')
+        ];
+    } else {
+        $error_message = $body['error']['message'] ?? 'Invalid API key';
+        return [
+            'success' => false,
+            'error' => $error_message
+        ];
+    }
 }
 
 /**
@@ -42,14 +174,15 @@ function fml_stripe_webhook_handler(WP_REST_Request $request) {
     $sig_header = $_SERVER['HTTP_STRIPE_SIGNATURE'] ?? '';
 
     // Verify webhook secret is configured
-    if (!defined('FML_STRIPE_WEBHOOK_SECRET') || empty(FML_STRIPE_WEBHOOK_SECRET)) {
-        error_log('Stripe webhook error: FML_STRIPE_WEBHOOK_SECRET not configured');
+    $webhook_secret = fml_get_stripe_webhook_secret();
+    if (empty($webhook_secret)) {
+        error_log('Stripe webhook error: Webhook secret not configured');
         return new WP_REST_Response(['error' => 'Webhook not configured'], 500);
     }
 
     // Verify webhook signature
     try {
-        $event = fml_verify_stripe_webhook($payload, $sig_header, FML_STRIPE_WEBHOOK_SECRET);
+        $event = fml_verify_stripe_webhook($payload, $sig_header, $webhook_secret);
     } catch (Exception $e) {
         error_log('Stripe webhook signature verification failed: ' . $e->getMessage());
         return new WP_REST_Response(['error' => 'Invalid signature'], 400);
@@ -395,7 +528,8 @@ add_action('rest_api_init', function() {
  */
 function fml_create_stripe_checkout(WP_REST_Request $request) {
     // Verify Stripe is configured
-    if (!defined('FML_STRIPE_SECRET_KEY') || empty(FML_STRIPE_SECRET_KEY)) {
+    $stripe_secret_key = fml_get_stripe_secret_key();
+    if (empty($stripe_secret_key)) {
         return new WP_REST_Response([
             'success' => false,
             'error' => 'Stripe not configured'
@@ -471,7 +605,7 @@ function fml_create_stripe_checkout(WP_REST_Request $request) {
     // Make Stripe API request
     $response = wp_remote_post('https://api.stripe.com/v1/checkout/sessions', [
         'headers' => [
-            'Authorization' => 'Bearer ' . FML_STRIPE_SECRET_KEY,
+            'Authorization' => 'Bearer ' . $stripe_secret_key,
             'Content-Type' => 'application/x-www-form-urlencoded'
         ],
         'body' => fml_build_stripe_body($checkout_data)
@@ -539,36 +673,247 @@ add_action('admin_menu', function() {
     );
 });
 
+/**
+ * Register AJAX handler for Stripe connection verification
+ */
+add_action('wp_ajax_fml_verify_stripe', 'fml_ajax_verify_stripe_connection');
+
+function fml_ajax_verify_stripe_connection() {
+    check_ajax_referer('fml_licensing_settings', 'nonce');
+
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(['message' => 'Unauthorized']);
+    }
+
+    $key_type = sanitize_text_field($_POST['key_type'] ?? 'current');
+
+    // Determine which key to test
+    if ($key_type === 'test') {
+        $secret_key = sanitize_text_field($_POST['test_secret_key'] ?? '');
+    } elseif ($key_type === 'live') {
+        $secret_key = sanitize_text_field($_POST['live_secret_key'] ?? '');
+    } else {
+        $secret_key = fml_get_stripe_secret_key();
+    }
+
+    if (empty($secret_key)) {
+        wp_send_json_error(['message' => 'No API key provided']);
+    }
+
+    $result = fml_verify_stripe_connection($secret_key);
+
+    if ($result['success']) {
+        wp_send_json_success([
+            'message' => $result['message'],
+            'mode' => $result['mode']
+        ]);
+    } else {
+        wp_send_json_error(['message' => $result['error']]);
+    }
+}
+
 function fml_licensing_settings_page() {
+    // Handle form submission
     if (isset($_POST['fml_save_licensing_settings']) && check_admin_referer('fml_licensing_settings')) {
+        // Save pricing settings
         update_option('fml_non_exclusive_license_price', intval($_POST['fml_non_exclusive_license_price']));
         update_option('fml_nft_minting_fee', intval($_POST['fml_nft_minting_fee']));
+
+        // Save Stripe mode
+        $mode = sanitize_text_field($_POST['fml_stripe_mode'] ?? 'test');
+        update_option('fml_stripe_mode', in_array($mode, ['test', 'live']) ? $mode : 'test');
+
+        // Save Stripe API keys (encrypted storage would be better for production)
+        if (!empty($_POST['fml_stripe_test_secret_key'])) {
+            update_option('fml_stripe_test_secret_key', sanitize_text_field($_POST['fml_stripe_test_secret_key']));
+        }
+        if (!empty($_POST['fml_stripe_test_publishable_key'])) {
+            update_option('fml_stripe_test_publishable_key', sanitize_text_field($_POST['fml_stripe_test_publishable_key']));
+        }
+        if (!empty($_POST['fml_stripe_live_secret_key'])) {
+            update_option('fml_stripe_live_secret_key', sanitize_text_field($_POST['fml_stripe_live_secret_key']));
+        }
+        if (!empty($_POST['fml_stripe_live_publishable_key'])) {
+            update_option('fml_stripe_live_publishable_key', sanitize_text_field($_POST['fml_stripe_live_publishable_key']));
+        }
+        if (!empty($_POST['fml_stripe_webhook_secret'])) {
+            update_option('fml_stripe_webhook_secret', sanitize_text_field($_POST['fml_stripe_webhook_secret']));
+        }
+
         echo '<div class="notice notice-success"><p>Settings saved.</p></div>';
     }
 
+    // Get current values
     $license_price = get_option('fml_non_exclusive_license_price', 4900);
     $nft_fee = get_option('fml_nft_minting_fee', 500);
+    $stripe_mode = get_option('fml_stripe_mode', 'test');
+
+    // Get Stripe keys (masked for display)
+    $test_secret = get_option('fml_stripe_test_secret_key', '');
+    $test_publishable = get_option('fml_stripe_test_publishable_key', '');
+    $live_secret = get_option('fml_stripe_live_secret_key', '');
+    $live_publishable = get_option('fml_stripe_live_publishable_key', '');
+    $webhook_secret = get_option('fml_stripe_webhook_secret', '');
 
     ?>
     <div class="wrap">
         <h1>Sync.Land Licensing Settings</h1>
 
-        <form method="post">
+        <form method="post" id="fml-licensing-form">
             <?php wp_nonce_field('fml_licensing_settings'); ?>
 
+            <!-- Stripe API Configuration -->
+            <h2>Stripe API Configuration</h2>
+
+            <table class="form-table">
+                <tr>
+                    <th scope="row">Stripe Mode</th>
+                    <td>
+                        <fieldset>
+                            <label>
+                                <input type="radio" name="fml_stripe_mode" value="test" <?php checked($stripe_mode, 'test'); ?>>
+                                <span style="color: #f0ad4e; font-weight: bold;">Test Mode</span>
+                                <span class="description"> - Use test API keys (no real charges)</span>
+                            </label>
+                            <br>
+                            <label>
+                                <input type="radio" name="fml_stripe_mode" value="live" <?php checked($stripe_mode, 'live'); ?>>
+                                <span style="color: #5cb85c; font-weight: bold;">Live Mode</span>
+                                <span class="description"> - Use live API keys (real charges)</span>
+                            </label>
+                        </fieldset>
+                        <p class="description" style="margin-top: 10px;">
+                            <strong>Current Mode:</strong>
+                            <?php if ($stripe_mode === 'live'): ?>
+                                <span style="background: #5cb85c; color: white; padding: 2px 8px; border-radius: 3px;">LIVE</span>
+                            <?php else: ?>
+                                <span style="background: #f0ad4e; color: white; padding: 2px 8px; border-radius: 3px;">TEST</span>
+                            <?php endif; ?>
+                        </p>
+                    </td>
+                </tr>
+            </table>
+
+            <h3 style="border-bottom: 1px solid #f0ad4e; padding-bottom: 5px; color: #f0ad4e;">Test Mode Keys</h3>
+            <table class="form-table">
+                <tr>
+                    <th scope="row">
+                        <label for="fml_stripe_test_secret_key">Test Secret Key</label>
+                    </th>
+                    <td>
+                        <input type="password" name="fml_stripe_test_secret_key" id="fml_stripe_test_secret_key"
+                               class="regular-text" placeholder="sk_test_..."
+                               value="<?php echo esc_attr($test_secret); ?>" autocomplete="off">
+                        <button type="button" class="button fml-toggle-visibility" data-target="fml_stripe_test_secret_key">Show</button>
+                        <button type="button" class="button fml-verify-key" data-key-type="test">Verify</button>
+                        <span class="fml-verify-status" id="fml-test-status"></span>
+                        <?php if (!empty($test_secret)): ?>
+                            <p class="description" style="color: green;">&#10003; Key saved</p>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">
+                        <label for="fml_stripe_test_publishable_key">Test Publishable Key</label>
+                    </th>
+                    <td>
+                        <input type="text" name="fml_stripe_test_publishable_key" id="fml_stripe_test_publishable_key"
+                               class="regular-text" placeholder="pk_test_..."
+                               value="<?php echo esc_attr($test_publishable); ?>">
+                        <?php if (!empty($test_publishable)): ?>
+                            <p class="description" style="color: green;">&#10003; Key saved</p>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+            </table>
+
+            <h3 style="border-bottom: 1px solid #5cb85c; padding-bottom: 5px; color: #5cb85c;">Live Mode Keys</h3>
+            <table class="form-table">
+                <tr>
+                    <th scope="row">
+                        <label for="fml_stripe_live_secret_key">Live Secret Key</label>
+                    </th>
+                    <td>
+                        <input type="password" name="fml_stripe_live_secret_key" id="fml_stripe_live_secret_key"
+                               class="regular-text" placeholder="sk_live_..."
+                               value="<?php echo esc_attr($live_secret); ?>" autocomplete="off">
+                        <button type="button" class="button fml-toggle-visibility" data-target="fml_stripe_live_secret_key">Show</button>
+                        <button type="button" class="button fml-verify-key" data-key-type="live">Verify</button>
+                        <span class="fml-verify-status" id="fml-live-status"></span>
+                        <?php if (!empty($live_secret)): ?>
+                            <p class="description" style="color: green;">&#10003; Key saved</p>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">
+                        <label for="fml_stripe_live_publishable_key">Live Publishable Key</label>
+                    </th>
+                    <td>
+                        <input type="text" name="fml_stripe_live_publishable_key" id="fml_stripe_live_publishable_key"
+                               class="regular-text" placeholder="pk_live_..."
+                               value="<?php echo esc_attr($live_publishable); ?>">
+                        <?php if (!empty($live_publishable)): ?>
+                            <p class="description" style="color: green;">&#10003; Key saved</p>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+            </table>
+
+            <h3 style="border-bottom: 1px solid #ccc; padding-bottom: 5px;">Webhook Configuration</h3>
+            <table class="form-table">
+                <tr>
+                    <th scope="row">
+                        <label for="fml_stripe_webhook_secret">Webhook Secret</label>
+                    </th>
+                    <td>
+                        <input type="password" name="fml_stripe_webhook_secret" id="fml_stripe_webhook_secret"
+                               class="regular-text" placeholder="whsec_..."
+                               value="<?php echo esc_attr($webhook_secret); ?>" autocomplete="off">
+                        <button type="button" class="button fml-toggle-visibility" data-target="fml_stripe_webhook_secret">Show</button>
+                        <?php if (!empty($webhook_secret)): ?>
+                            <p class="description" style="color: green;">&#10003; Secret saved</p>
+                        <?php endif; ?>
+                    </td>
+                </tr>
+                <tr>
+                    <th scope="row">Webhook URL</th>
+                    <td>
+                        <code id="fml-webhook-url"><?php echo esc_html(home_url('/wp-json/FML/v1/stripe/webhook')); ?></code>
+                        <button type="button" class="button" onclick="navigator.clipboard.writeText(document.getElementById('fml-webhook-url').textContent); this.textContent='Copied!'; setTimeout(() => this.textContent='Copy', 2000);">Copy</button>
+                        <p class="description">Add this URL in <a href="https://dashboard.stripe.com/webhooks" target="_blank">Stripe Dashboard > Developers > Webhooks</a></p>
+                    </td>
+                </tr>
+            </table>
+
+            <!-- Connection Status -->
+            <h3>Connection Status</h3>
+            <table class="form-table">
+                <tr>
+                    <th scope="row">Current Connection</th>
+                    <td>
+                        <button type="button" class="button button-secondary" id="fml-verify-current">
+                            <span class="dashicons dashicons-update" style="vertical-align: middle;"></span>
+                            Verify Current Connection
+                        </button>
+                        <span id="fml-current-status" style="margin-left: 10px;"></span>
+                    </td>
+                </tr>
+            </table>
+
+            <hr style="margin: 30px 0;">
+
+            <!-- License Pricing -->
             <h2>License Pricing</h2>
             <table class="form-table">
                 <tr>
                     <th scope="row">
-                        <label for="fml_non_exclusive_license_price">Non-Exclusive License Price (cents USD)</label>
+                        <label for="fml_non_exclusive_license_price">Commercial License Price (cents USD)</label>
                     </th>
                     <td>
                         <input type="number" name="fml_non_exclusive_license_price" id="fml_non_exclusive_license_price"
-                               value="<?php echo esc_attr($license_price); ?>" min="0" step="1" />
-                        <p class="description">
-                            Price in cents. 4900 = $49.00 USD<br>
-                            This is the default price for non-exclusive sync licenses.
-                        </p>
+                               value="<?php echo esc_attr($license_price); ?>" min="0" step="1" style="width: 100px;">
+                        <span class="description">= $<?php echo number_format($license_price / 100, 2); ?> USD</span>
                     </td>
                 </tr>
                 <tr>
@@ -577,17 +922,15 @@ function fml_licensing_settings_page() {
                     </th>
                     <td>
                         <input type="number" name="fml_nft_minting_fee" id="fml_nft_minting_fee"
-                               value="<?php echo esc_attr($nft_fee); ?>" min="0" step="1" />
-                        <p class="description">
-                            Price in cents. 500 = $5.00 USD<br>
-                            Fee for minting license as NFT on Cardano blockchain.
-                        </p>
+                               value="<?php echo esc_attr($nft_fee); ?>" min="0" step="1" style="width: 100px;">
+                        <span class="description">= $<?php echo number_format($nft_fee / 100, 2); ?> USD</span>
                     </td>
                 </tr>
             </table>
 
-            <h2>License Types</h2>
-            <table class="widefat" style="max-width: 800px;">
+            <!-- Pricing Summary -->
+            <h3>Pricing Summary</h3>
+            <table class="widefat" style="max-width: 700px;">
                 <thead>
                     <tr>
                         <th>License Option</th>
@@ -623,50 +966,98 @@ function fml_licensing_settings_page() {
                     </tr>
                 </tbody>
             </table>
-            <p class="description" style="margin-top: 10px;">
-                <strong>NFT Verification:</strong> Available for ANY license type. Mints the license as an NFT on Cardano blockchain for permanent verification.
-            </p>
-
-            <h2>Stripe Configuration Status</h2>
-            <table class="form-table">
-                <tr>
-                    <th>Stripe Secret Key</th>
-                    <td>
-                        <?php if (defined('FML_STRIPE_SECRET_KEY') && !empty(FML_STRIPE_SECRET_KEY)): ?>
-                            <span style="color: green;">&#10003; Configured</span>
-                            (<?php echo strpos(FML_STRIPE_SECRET_KEY, 'sk_test_') === 0 ? 'Test Mode' : 'Live Mode'; ?>)
-                        <?php else: ?>
-                            <span style="color: red;">&#10007; Not configured</span>
-                            <br><code>define('FML_STRIPE_SECRET_KEY', 'sk_...');</code> in wp-config.php
-                        <?php endif; ?>
-                    </td>
-                </tr>
-                <tr>
-                    <th>Stripe Webhook Secret</th>
-                    <td>
-                        <?php if (defined('FML_STRIPE_WEBHOOK_SECRET') && !empty(FML_STRIPE_WEBHOOK_SECRET)): ?>
-                            <span style="color: green;">&#10003; Configured</span>
-                        <?php else: ?>
-                            <span style="color: red;">&#10007; Not configured</span>
-                            <br><code>define('FML_STRIPE_WEBHOOK_SECRET', 'whsec_...');</code> in wp-config.php
-                        <?php endif; ?>
-                    </td>
-                </tr>
-                <tr>
-                    <th>Webhook URL</th>
-                    <td>
-                        <code><?php echo esc_html(home_url('/wp-json/FML/v1/stripe/webhook')); ?></code>
-                        <p class="description">Add this URL in Stripe Dashboard > Developers > Webhooks</p>
-                    </td>
-                </tr>
-            </table>
 
             <p class="submit">
-                <input type="submit" name="fml_save_licensing_settings" class="button-primary"
-                       value="Save Settings" />
+                <input type="submit" name="fml_save_licensing_settings" class="button-primary" value="Save All Settings" />
             </p>
         </form>
     </div>
+
+    <style>
+        .fml-verify-status {
+            margin-left: 10px;
+            font-weight: bold;
+        }
+        .fml-verify-status.success { color: #5cb85c; }
+        .fml-verify-status.error { color: #d9534f; }
+        .fml-verify-status.loading { color: #666; }
+    </style>
+
+    <script>
+    jQuery(document).ready(function($) {
+        // Toggle password visibility
+        $('.fml-toggle-visibility').on('click', function() {
+            var targetId = $(this).data('target');
+            var $input = $('#' + targetId);
+            var $btn = $(this);
+
+            if ($input.attr('type') === 'password') {
+                $input.attr('type', 'text');
+                $btn.text('Hide');
+            } else {
+                $input.attr('type', 'password');
+                $btn.text('Show');
+            }
+        });
+
+        // Verify individual keys
+        $('.fml-verify-key').on('click', function() {
+            var keyType = $(this).data('key-type');
+            var $status = $('#fml-' + keyType + '-status');
+            var secretKey = keyType === 'test'
+                ? $('#fml_stripe_test_secret_key').val()
+                : $('#fml_stripe_live_secret_key').val();
+
+            if (!secretKey) {
+                $status.removeClass('success loading').addClass('error').text('No key entered');
+                return;
+            }
+
+            $status.removeClass('success error').addClass('loading').text('Verifying...');
+
+            $.post(ajaxurl, {
+                action: 'fml_verify_stripe',
+                nonce: '<?php echo wp_create_nonce('fml_licensing_settings'); ?>',
+                key_type: keyType,
+                test_secret_key: keyType === 'test' ? secretKey : '',
+                live_secret_key: keyType === 'live' ? secretKey : ''
+            }, function(response) {
+                if (response.success) {
+                    $status.removeClass('error loading').addClass('success').text('✓ ' + response.data.message);
+                } else {
+                    $status.removeClass('success loading').addClass('error').text('✗ ' + response.data.message);
+                }
+            }).fail(function() {
+                $status.removeClass('success loading').addClass('error').text('✗ Connection failed');
+            });
+        });
+
+        // Verify current connection
+        $('#fml-verify-current').on('click', function() {
+            var $btn = $(this);
+            var $status = $('#fml-current-status');
+
+            $btn.prop('disabled', true);
+            $status.removeClass('success error').addClass('loading').text('Verifying...');
+
+            $.post(ajaxurl, {
+                action: 'fml_verify_stripe',
+                nonce: '<?php echo wp_create_nonce('fml_licensing_settings'); ?>',
+                key_type: 'current'
+            }, function(response) {
+                $btn.prop('disabled', false);
+                if (response.success) {
+                    $status.removeClass('error loading').css('color', '#5cb85c').text('✓ ' + response.data.message);
+                } else {
+                    $status.removeClass('success loading').css('color', '#d9534f').text('✗ ' + response.data.message);
+                }
+            }).fail(function() {
+                $btn.prop('disabled', false);
+                $status.removeClass('success loading').css('color', '#d9534f').text('✗ Connection failed');
+            });
+        });
+    });
+    </script>
     <?php
 }
 
@@ -688,7 +1079,8 @@ function fml_licensing_settings_page() {
  */
 function fml_create_cart_stripe_checkout($summary, $licensee_name, $project_name, $usage_description) {
     // Verify Stripe is configured
-    if (!defined('FML_STRIPE_SECRET_KEY') || empty(FML_STRIPE_SECRET_KEY)) {
+    $stripe_secret_key = fml_get_stripe_secret_key();
+    if (empty($stripe_secret_key)) {
         return [
             'success' => false,
             'error' => 'Stripe not configured'
@@ -782,7 +1174,7 @@ function fml_create_cart_stripe_checkout($summary, $licensee_name, $project_name
     // Make Stripe API request
     $response = wp_remote_post('https://api.stripe.com/v1/checkout/sessions', [
         'headers' => [
-            'Authorization' => 'Bearer ' . FML_STRIPE_SECRET_KEY,
+            'Authorization' => 'Bearer ' . $stripe_secret_key,
             'Content-Type' => 'application/x-www-form-urlencoded'
         ],
         'body' => fml_build_stripe_body($checkout_data),
