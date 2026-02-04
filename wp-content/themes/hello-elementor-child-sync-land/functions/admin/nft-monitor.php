@@ -524,12 +524,24 @@ function fml_nft_monitor_page() {
                                 $license_pod = pods('license', $item['license_id']);
                                 $db_nft_status = ($license_pod && $license_pod->exists()) ? ($license_pod->field('nft_status') ?: 'none') : 'not found';
                                 $db_wallet = ($license_pod && $license_pod->exists()) ? $license_pod->field('wallet_address') : '';
+
+                                // Handle wallet address being array or string
+                                $queue_wallet = $item['wallet_address'] ?? '';
+                                if (is_array($queue_wallet)) {
+                                    $queue_wallet = $queue_wallet[0] ?? json_encode($queue_wallet);
+                                }
+                                $queue_wallet = (string) $queue_wallet;
+
+                                if (is_array($db_wallet)) {
+                                    $db_wallet = $db_wallet[0] ?? '';
+                                }
+                                $db_wallet = (string) $db_wallet;
                             ?>
                                 <tr>
                                     <td><a href="<?php echo admin_url('post.php?post=' . $item['license_id'] . '&action=edit'); ?>">#<?php echo esc_html($item['license_id']); ?></a></td>
                                     <td>
-                                        <code class="fml-code" title="<?php echo esc_attr($item['wallet_address']); ?>"><?php echo esc_html(substr($item['wallet_address'], 0, 15) . '...'); ?></code>
-                                        <?php if ($db_wallet !== $item['wallet_address']): ?>
+                                        <code class="fml-code" title="<?php echo esc_attr($queue_wallet); ?>"><?php echo esc_html($queue_wallet ? substr($queue_wallet, 0, 15) . '...' : '(none)'); ?></code>
+                                        <?php if ($db_wallet && $db_wallet !== $queue_wallet): ?>
                                             <br><small style="color: #f6e05e;">DB: <?php echo esc_html(substr($db_wallet, 0, 10) . '...'); ?></small>
                                         <?php endif; ?>
                                     </td>
