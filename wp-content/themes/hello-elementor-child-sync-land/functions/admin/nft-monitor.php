@@ -558,6 +558,12 @@ function fml_nft_monitor_page() {
             <div id="cron-jobs" class="fml-tab-content">
                 <h3>Scheduled Cron Jobs</h3>
 
+                <p style="margin-bottom: 15px;">
+                    <strong>Current Server Time:</strong>
+                    <code class="fml-code"><?php echo date('Y-m-d H:i:s'); ?></code>
+                    (<?php echo date('T'); ?>)
+                </p>
+
                 <?php if (empty($fml_crons)): ?>
                     <p><em>No FML cron jobs scheduled.</em></p>
                 <?php else: ?>
@@ -566,16 +572,35 @@ function fml_nft_monitor_page() {
                             <tr>
                                 <th>Hook</th>
                                 <th>Schedule</th>
-                                <th>Next Run</th>
+                                <th>Scheduled For</th>
+                                <th>Time Until Run</th>
                                 <th>Arguments</th>
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach ($fml_crons as $cron): ?>
+                            <?php
+                            $current_time = time();
+                            foreach ($fml_crons as $cron):
+                                $time_diff = $cron['timestamp'] - $current_time;
+                                if ($time_diff <= 0) {
+                                    $time_diff_display = '<span style="color: #48bb78; font-weight: bold;">Ready to run</span>';
+                                } elseif ($time_diff < 60) {
+                                    $time_diff_display = '<span style="color: #f6e05e;">' . $time_diff . ' seconds</span>';
+                                } elseif ($time_diff < 3600) {
+                                    $mins = floor($time_diff / 60);
+                                    $secs = $time_diff % 60;
+                                    $time_diff_display = '<span style="color: #f6e05e;">' . $mins . 'm ' . $secs . 's</span>';
+                                } else {
+                                    $hours = floor($time_diff / 3600);
+                                    $mins = floor(($time_diff % 3600) / 60);
+                                    $time_diff_display = '<span style="color: #fc8181;">' . $hours . 'h ' . $mins . 'm</span>';
+                                }
+                            ?>
                                 <tr>
                                     <td><code class="fml-code"><?php echo esc_html($cron['hook']); ?></code></td>
                                     <td><?php echo esc_html($cron['schedule'] ?: 'single'); ?></td>
                                     <td><?php echo esc_html(date('Y-m-d H:i:s', $cron['timestamp'])); ?></td>
+                                    <td><?php echo $time_diff_display; ?></td>
                                     <td>
                                         <?php if (!empty($cron['args'])): ?>
                                             <code class="fml-code"><?php echo esc_html(json_encode($cron['args'])); ?></code>
