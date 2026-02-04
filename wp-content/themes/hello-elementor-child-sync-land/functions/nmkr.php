@@ -657,11 +657,13 @@ function fml_upload_license_pdf_to_ipfs($pdf_url, $filename = '') {
     $api_url = $creds['api_url'] . '/v2/UploadToIPFS/' . $creds['project_uid'];
     error_log("Uploading to NMKR IPFS: {$api_url}");
 
+    // NMKR API field names (try lowercase as per their API spec)
     $data = [
         'fileFromBase64' => $pdf_base64,
-        'fileName' => $filename,
-        'mimeType' => 'application/pdf'
+        'mimetype' => 'application/pdf'
     ];
+
+    error_log("IPFS upload request (excluding base64): mimetype=application/pdf, base64_length=" . strlen($pdf_base64));
 
     $response = wp_remote_post($api_url, [
         'headers' => [
@@ -702,13 +704,15 @@ function fml_upload_license_pdf_to_ipfs($pdf_url, $filename = '') {
             'gateway_url' => 'https://ipfs.io/ipfs/' . $ipfs_hash
         ];
     } else {
-        $error_msg = $body['message'] ?? $body['error'] ?? $body['errorMessage'] ?? "HTTP {$http_code}";
+        $error_msg = $body['message'] ?? $body['error'] ?? $body['errorMessage'] ?? $body['title'] ?? "HTTP {$http_code}";
         error_log("IPFS Upload failed: {$error_msg}");
+        error_log("Full NMKR response: " . $raw_body);
         return [
             'success' => false,
             'error' => "IPFS upload failed: {$error_msg}",
             'http_code' => $http_code,
-            'response' => $body
+            'response' => $body,
+            'raw_response' => substr($raw_body, 0, 500)
         ];
     }
 }
@@ -847,13 +851,16 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
         error_log("*** License PDF uploaded to IPFS: {$ipfs_url} ***");
     } else {
         $ipfs_error = $ipfs_result['error'] ?? 'Unknown error';
+        $ipfs_raw = $ipfs_result['raw_response'] ?? '';
         error_log("*** IPFS upload FAILED: {$ipfs_error} ***");
+        error_log("*** NMKR raw response: {$ipfs_raw} ***");
         error_log("*** Falling back to S3 URL (will be truncated!) ***");
 
         // Log to our monitoring system too
         if (function_exists('fml_log_event')) {
             fml_log_event('nft', "IPFS upload failed for license #{$license_id}", [
                 'error' => $ipfs_error,
+                'nmkr_response' => $ipfs_raw,
                 's3_url' => $license_url
             ], 'warning');
         }
