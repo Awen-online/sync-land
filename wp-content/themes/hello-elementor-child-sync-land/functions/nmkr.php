@@ -702,6 +702,22 @@ function fml_get_pod_value($pod, $field) {
     return $value ?: '';
 }
 
+/**
+ * Truncate string to fit CIP-25 metadata limit (64 bytes)
+ * Also removes any characters that might cause issues
+ */
+function fml_truncate_metadata_string($string, $max_bytes = 64) {
+    // Remove any control characters
+    $string = preg_replace('/[\x00-\x1F\x7F]/u', '', $string);
+
+    // Truncate to max bytes (accounting for UTF-8 multi-byte chars)
+    if (strlen($string) > $max_bytes) {
+        $string = mb_substr($string, 0, $max_bytes - 3, 'UTF-8') . '...';
+    }
+
+    return $string;
+}
+
 function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
     error_log("=== Starting NFT mint for license #{$license_id} ===");
 
@@ -963,48 +979,56 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
     // Get additional license data
     $licensor_name = fml_get_pod_value($license_pod, 'licensor') ?: $artist_name;
     $legal_name_value = $legal_name ?: 'Licensee';
-    $display_name = "Sync License: {$artist_name} - {$song_title}";
+    $display_name = fml_truncate_metadata_string("Sync License: {$artist_name} - {$song_title}");
+
+    // Truncate all string values to fit CIP-25 64-byte limit
+    $meta_title = fml_truncate_metadata_string($song_title);
+    $meta_description = fml_truncate_metadata_string("License for {$song_title} by {$artist_name}");
+    $meta_project_desc = fml_truncate_metadata_string("Sync.Land license: {$song_title}");
+    $meta_artist = fml_truncate_metadata_string($artist_name);
+    $meta_licensor = fml_truncate_metadata_string($licensor_name);
+    $meta_licensee = fml_truncate_metadata_string($legal_name_value);
+    $meta_license_type = fml_truncate_metadata_string($license_type_label);
 
     $upload_data = [
         'tokenname' => $token_name,
         'displayname' => $display_name,
         'metadataPlaceholder' => [
             // Match NMKR project CIP25 template placeholders EXACTLY (without angle brackets)
+            // All values truncated to 64 bytes max for CIP-25 compliance
             ['name' => 'display_name', 'value' => $display_name],
-            ['name' => 'project_description', 'value' => "Sync.Land music license NFT for '{$song_title}' by {$artist_name}"],
-            ['name' => 'title', 'value' => $song_title],
-            ['name' => 'description', 'value' => "Sync license for '{$song_title}' by {$artist_name}. {$license_type_label}."],
-            ['name' => 'license_description', 'value' => $license_type_label],
-            ['name' => 'licensor', 'value' => $licensor_name],
-            ['name' => 'licensee', 'value' => $legal_name_value],
-            ['name' => 'compositionrecording', 'value' => 'Master Recording & Sync'],
-            ['name' => 'artist', 'value' => $artist_name],
-            ['name' => 'publisher', 'value' => $artist_name],
-            ['name' => 'composer', 'value' => $artist_name],
-            ['name' => 'fee', 'value' => $license_type === 'non_exclusive' ? 'Paid License' : 'Free (CC-BY 4.0)'],
+            ['name' => 'project_description', 'value' => $meta_project_desc],
+            ['name' => 'title', 'value' => $meta_title],
+            ['name' => 'description', 'value' => $meta_description],
+            ['name' => 'license_description', 'value' => $meta_license_type],
+            ['name' => 'licensor', 'value' => $meta_licensor],
+            ['name' => 'licensee', 'value' => $meta_licensee],
+            ['name' => 'compositionrecording', 'value' => 'Master Recording and Sync'],
+            ['name' => 'artist', 'value' => $meta_artist],
+            ['name' => 'publisher', 'value' => $meta_artist],
+            ['name' => 'composer', 'value' => $meta_artist],
+            ['name' => 'fee', 'value' => $license_type === 'non_exclusive' ? 'Paid' : 'Free CC-BY'],
             ['name' => 'territory', 'value' => 'Worldwide'],
             ['name' => 'media_types', 'value' => 'All Media'],
             ['name' => 'term', 'value' => 'Perpetual'],
             ['name' => 'usage_duration', 'value' => 'Unlimited'],
-            ['name' => 'license_pdf', 'value' => $license_url ?: 'N/A']
+            ['name' => 'license_pdf', 'value' => fml_truncate_metadata_string($license_url ?: 'N/A')]
         ],
         'previewImageNft' => $preview_image_data
     ];
 
-    error_log("Metadata placeholders: display_name={$display_name}, artist={$artist_name}, licensee={$legal_name_value}, license_pdf={$license_url}");
+    error_log("Metadata placeholders: display_name={$display_name}, artist={$meta_artist}, licensee={$meta_licensee}");
 
-    // Add subfile (license PDF) if we have a public URL
-    if (!empty($license_url) && strpos($license_url, 'http') === 0) {
-        $upload_data['subfiles'] = [
-            [
-                'subfile' => [
-                    'mimetype' => 'application/pdf',
-                    'fileFromUrl' => $license_url,
-                    'displayname' => 'License Agreement PDF'
-                ]
-            ]
-        ];
+    // NOTE: Not adding subfiles - the CIP25 template only has one file entry (the image)
+    // The license PDF URL is stored in the 'license_pdf' metadata field instead
+
+    // Log the full upload data for debugging
+    error_log("=== NMKR Upload Data (excluding base64 image) ===");
+    $debug_data = $upload_data;
+    if (isset($debug_data['previewImageNft']['fileFromBase64'])) {
+        $debug_data['previewImageNft']['fileFromBase64'] = '[BASE64_DATA_' . strlen($upload_data['previewImageNft']['fileFromBase64']) . '_chars]';
     }
+    error_log(json_encode($debug_data, JSON_PRETTY_PRINT));
 
     error_log("=== NMKR Upload NFT Request ===");
     error_log("API URL: {$upload_url}");
@@ -1050,6 +1074,36 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
     }
 
     error_log("NFT uploaded successfully. NFT UID: {$nft_uid}");
+
+    // Check NFT details from NMKR to see if there are any issues
+    $nft_details_url = $creds['api_url'] . '/v2/GetNftDetails/' . $creds['project_uid'] . '/' . $nft_uid;
+    $nft_details_response = wp_remote_get($nft_details_url, [
+        'headers' => [
+            'Authorization' => 'Bearer ' . $creds['api_key'],
+            'Accept' => 'application/json'
+        ],
+        'timeout' => 30
+    ]);
+
+    if (!is_wp_error($nft_details_response)) {
+        $nft_details = json_decode(wp_remote_retrieve_body($nft_details_response), true);
+        error_log("=== NFT Details from NMKR ===");
+        error_log("State: " . ($nft_details['state'] ?? 'unknown'));
+        error_log("Blocked: " . ($nft_details['blocked'] ?? 'unknown'));
+        error_log("Error: " . ($nft_details['error'] ?? $nft_details['errorMessage'] ?? 'none'));
+
+        // If there's an error or it's blocked, return that
+        if (!empty($nft_details['error']) || !empty($nft_details['errorMessage'])) {
+            $nft_error = $nft_details['error'] ?? $nft_details['errorMessage'];
+            error_log("NFT has error in NMKR: {$nft_error}");
+            return ['success' => false, 'error' => "NMKR NFT error: {$nft_error}", 'nft_details' => $nft_details];
+        }
+
+        if (isset($nft_details['blocked']) && $nft_details['blocked'] === true) {
+            error_log("NFT is blocked in NMKR");
+            return ['success' => false, 'error' => 'NFT is blocked - check metadata in NMKR dashboard', 'nft_details' => $nft_details];
+        }
+    }
 
     // ========================================
     // STEP 2: Mint and Send the NFT
