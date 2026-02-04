@@ -1183,26 +1183,58 @@ function fml_verify_license_nft(WP_REST_Request $request) {
 /**
  * Retry failed NFT minting
  */
-function fml_retry_failed_nft_minting($license_id) {
+function fml_retry_failed_nft_minting($license_id, $force = false) {
     $license_pod = pods('license', $license_id);
     if (!$license_pod || !$license_pod->exists()) {
         return ['success' => false, 'error' => 'License not found'];
     }
 
     $nft_status = $license_pod->field('nft_status');
-    if ($nft_status !== 'failed' && $nft_status !== 'pending') {
-        return ['success' => false, 'error' => 'License NFT status is not failed or pending'];
+    error_log("Retry NFT minting for license #{$license_id} - Current status: '{$nft_status}'");
+
+    // Allow retry if status is failed, pending, empty, or force is true
+    if (!$force && $nft_status === 'minted') {
+        return ['success' => false, 'error' => 'License NFT already minted'];
     }
 
     $wallet_address = $license_pod->field('wallet_address');
     if (empty($wallet_address)) {
-        return ['success' => false, 'error' => 'No wallet address on record'];
+        return ['success' => false, 'error' => "No wallet address on record. Current nft_status: '{$nft_status}'"];
     }
 
     // Update status to pending
     $license_pod->save(['nft_status' => 'pending']);
 
+    // Also update the queue if it exists
+    if (function_exists('fml_update_nft_queue_item')) {
+        fml_update_nft_queue_item($license_id, 'processing');
+    }
+
     // Attempt minting with IPFS
+    return fml_mint_license_nft_with_ipfs($license_id, $wallet_address);
+}
+
+/**
+ * Force retry NFT minting with a new wallet address
+ */
+function fml_force_retry_nft_minting($license_id, $wallet_address) {
+    $license_pod = pods('license', $license_id);
+    if (!$license_pod || !$license_pod->exists()) {
+        return ['success' => false, 'error' => 'License not found'];
+    }
+
+    // Save the new wallet address
+    $license_pod->save([
+        'nft_status' => 'pending',
+        'wallet_address' => $wallet_address
+    ]);
+
+    // Add to queue
+    if (function_exists('fml_add_to_nft_queue')) {
+        fml_add_to_nft_queue($license_id, $wallet_address, 'high');
+    }
+
+    // Attempt minting
     return fml_mint_license_nft_with_ipfs($license_id, $wallet_address);
 }
 
