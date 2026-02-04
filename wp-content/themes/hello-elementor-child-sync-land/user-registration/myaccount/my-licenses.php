@@ -18,12 +18,41 @@ $paramsLicenses = array(
 $licenses = pods('license', $paramsLicenses);
 $total_licenses = $licenses->total();
 
-// Get counts by type
+// Get counts by type - do a pre-count pass
 $cc_by_count = 0;
 $commercial_count = 0;
 $nft_verified_count = 0;
+$nft_pending_count = 0;
 
-// We'll count while iterating
+// Store licenses in array for re-use
+$licenses_array = [];
+while ($licenses->fetch()) {
+    $license_data = [
+        'ID' => $licenses->field('ID'),
+        'license_type' => $licenses->field('license_type') ?: 'cc_by',
+        'nft_status' => $licenses->field('nft_status') ?: 'none',
+        'nft_transaction_hash' => $licenses->field('nft_transaction_hash'),
+        'license_url' => $licenses->field('license_url'),
+        'licensor' => $licenses->field('licensor'),
+        'project' => $licenses->field('project'),
+        'datetime' => $licenses->field('datetime'),
+        'song' => $licenses->field('song')
+    ];
+
+    // Count by type
+    if ($license_data['license_type'] === 'non_exclusive') {
+        $commercial_count++;
+    } else {
+        $cc_by_count++;
+    }
+    if ($license_data['nft_status'] === 'minted') {
+        $nft_verified_count++;
+    } elseif ($license_data['nft_status'] === 'pending' || $license_data['nft_status'] === 'processing') {
+        $nft_pending_count++;
+    }
+
+    $licenses_array[] = $license_data;
+}
 ?>
 
 <style>
@@ -150,12 +179,31 @@ $nft_verified_count = 0;
     background: rgba(246, 224, 94, 0.2);
     color: #f6e05e;
     border: 1px solid rgba(246, 224, 94, 0.3);
+    animation: pulse 2s infinite;
+}
+
+.fml-nft-badge.processing {
+    background: rgba(99, 179, 237, 0.2);
+    color: #63b3ed;
+    border: 1px solid rgba(99, 179, 237, 0.3);
+    animation: pulse 1.5s infinite;
+}
+
+.fml-nft-badge.failed {
+    background: rgba(245, 101, 101, 0.2);
+    color: #fc8181;
+    border: 1px solid rgba(245, 101, 101, 0.3);
 }
 
 .fml-nft-badge.none {
     background: rgba(160, 174, 192, 0.1);
     color: #718096;
     border: 1px solid rgba(160, 174, 192, 0.2);
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
 }
 
 /* DataTables Dark Mode Override */
@@ -414,6 +462,9 @@ $nft_verified_count = 0;
         <div class="banner-content">
             <h3>Payment Successful!</h3>
             <p>Your license<?php echo $total_licenses > 1 ? 's have' : ' has'; ?> been generated. You can download your license PDF and song files below.</p>
+            <?php if ($nft_pending_count > 0): ?>
+            <p style="margin-top: 8px; font-size: 0.9rem;"><i class="fas fa-spinner fa-spin"></i> NFT verification is being processed on the blockchain. This page will refresh automatically.</p>
+            <?php endif; ?>
         </div>
     </div>
     <?php endif; ?>
@@ -461,28 +512,18 @@ $nft_verified_count = 0;
         </thead>
         <tbody>
         <?php
-        while ($licenses->fetch()) {
-            $license_id = $licenses->field('ID');
-            $license_type = $licenses->field('license_type') ?: 'cc_by';
-            $nft_status = $licenses->field('nft_status') ?: 'none';
-            $nft_tx_hash = $licenses->field('nft_transaction_hash');
-            $license_url = $licenses->field('license_url');
-            $licensor = $licenses->field('licensor');
-            $project = $licenses->field('project');
-            $datetime = $licenses->field('datetime');
-
-            // Count by type
-            if ($license_type === 'non_exclusive') {
-                $commercial_count++;
-            } else {
-                $cc_by_count++;
-            }
-            if ($nft_status === 'minted') {
-                $nft_verified_count++;
-            }
+        foreach ($licenses_array as $license_data) {
+            $license_id = $license_data['ID'];
+            $license_type = $license_data['license_type'];
+            $nft_status = $license_data['nft_status'];
+            $nft_tx_hash = $license_data['nft_transaction_hash'];
+            $license_url = $license_data['license_url'];
+            $licensor = $license_data['licensor'];
+            $project = $license_data['project'];
+            $datetime = $license_data['datetime'];
 
             // Get song info
-            $song_data = $licenses->field('song');
+            $song_data = $license_data['song'];
             $song_id = is_array($song_data) ? $song_data['ID'] : $song_data;
             $song_pod = pods('song', $song_id);
             $song_title = $song_pod->field('post_title');
@@ -522,8 +563,12 @@ $nft_verified_count = 0;
             // NFT status badge
             if ($nft_status === 'minted') {
                 $nft_badge = '<span class="fml-nft-badge verified"><i class="fas fa-certificate"></i> Verified</span>';
+            } elseif ($nft_status === 'processing') {
+                $nft_badge = '<span class="fml-nft-badge processing"><i class="fas fa-spinner fa-spin"></i> Minting...</span>';
             } elseif ($nft_status === 'pending') {
-                $nft_badge = '<span class="fml-nft-badge pending"><i class="fas fa-clock"></i> Pending</span>';
+                $nft_badge = '<span class="fml-nft-badge pending"><i class="fas fa-hourglass-half"></i> Queued</span>';
+            } elseif ($nft_status === 'failed') {
+                $nft_badge = '<span class="fml-nft-badge failed"><i class="fas fa-exclamation-triangle"></i> Failed</span>';
             } else {
                 $nft_badge = '<span class="fml-nft-badge none">-</span>';
             }
@@ -580,11 +625,21 @@ $nft_verified_count = 0;
             '<div class="fml-stat-card"><span class="stat-number"><?php echo $cc_by_count; ?></span><span class="stat-label">CC-BY 4.0</span></div>' +
             '<div class="fml-stat-card"><span class="stat-number"><?php echo $commercial_count; ?></span><span class="stat-label">Commercial</span></div>' +
             '<div class="fml-stat-card nft-verified"><span class="stat-number"><?php echo $nft_verified_count; ?></span><span class="stat-label">NFT Verified</span></div>' +
+            <?php if ($nft_pending_count > 0): ?>
+            '<div class="fml-stat-card nft-pending"><span class="stat-number" style="color: #f6e05e;"><?php echo $nft_pending_count; ?></span><span class="stat-label">NFT Minting</span></div>' +
+            <?php endif; ?>
             '</div>';
         jQuery('.fml-licenses-container .fml-payment-success-banner').after(statsHtml);
         if (!jQuery('.fml-payment-success-banner').length) {
             jQuery('.fml-licenses-container').prepend(statsHtml);
         }
+
+        <?php if ($nft_pending_count > 0): ?>
+        // Auto-refresh page every 30 seconds if there are pending NFTs
+        setTimeout(function() {
+            location.reload();
+        }, 30000);
+        <?php endif; ?>
     });
     </script>
 

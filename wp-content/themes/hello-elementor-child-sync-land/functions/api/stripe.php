@@ -244,8 +244,11 @@ function fml_queue_checkout_processing($session, $event_id) {
         'received_at' => current_time('mysql')
     ], HOUR_IN_SECONDS);
 
-    // Schedule background processing in 5 seconds
-    wp_schedule_single_event(time() + 5, 'fml_process_checkout_session_async', [$session_id]);
+    // Schedule background processing immediately (1 second delay)
+    wp_schedule_single_event(time() + 1, 'fml_process_checkout_session_async', [$session_id]);
+
+    // Trigger cron immediately to process without waiting for page visit
+    spawn_cron();
 
     error_log("Checkout session {$session_id} queued for background processing");
 
@@ -1763,8 +1766,11 @@ function fml_queue_license_nft_minting($license_id, $wallet_address) {
         fml_add_to_nft_queue($license_id, $wallet_address);
     }
 
-    // Schedule NFT minting as a background task
-    wp_schedule_single_event(time() + 30, 'fml_mint_license_nft_async', [$license_id, $wallet_address]);
+    // Schedule NFT minting as a background task (5 second delay to allow license to be fully saved)
+    wp_schedule_single_event(time() + 5, 'fml_mint_license_nft_async', [$license_id, $wallet_address]);
+
+    // Trigger cron immediately
+    spawn_cron();
 
     error_log("Queued NFT minting for license {$license_id} to wallet {$wallet_address}");
 }
