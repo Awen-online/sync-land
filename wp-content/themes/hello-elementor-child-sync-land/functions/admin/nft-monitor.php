@@ -241,12 +241,31 @@ function fml_nft_monitor_page() {
 
             case 'retry_nft':
                 $license_id = intval($_POST['license_id'] ?? 0);
+                $force = isset($_POST['force_retry']) && $_POST['force_retry'] === '1';
                 if ($license_id && function_exists('fml_retry_failed_nft_minting')) {
-                    $result = fml_retry_failed_nft_minting($license_id);
+                    $result = fml_retry_failed_nft_minting($license_id, $force);
                     if ($result['success']) {
-                        echo '<div class="notice notice-success"><p>NFT minting retry initiated.</p></div>';
+                        echo '<div class="notice notice-success"><p>NFT minting succeeded! TX: ' . esc_html($result['data']['transaction_hash'] ?? 'pending') . '</p></div>';
                     } else {
                         echo '<div class="notice notice-error"><p>Retry failed: ' . esc_html($result['error'] ?? 'Unknown error') . '</p></div>';
+                    }
+                }
+                break;
+
+            case 'check_license_status':
+                $license_id = intval($_POST['license_id'] ?? 0);
+                if ($license_id) {
+                    $license_pod = pods('license', $license_id);
+                    if ($license_pod && $license_pod->exists()) {
+                        $status = $license_pod->field('nft_status') ?: '(empty)';
+                        $wallet = $license_pod->field('wallet_address') ?: '(none)';
+                        $license_url = $license_pod->field('license_url') ?: '(none)';
+                        echo '<div class="notice notice-info"><p><strong>License #' . $license_id . ' Status:</strong><br>';
+                        echo 'nft_status: <code>' . esc_html($status) . '</code><br>';
+                        echo 'wallet_address: <code>' . esc_html($wallet) . '</code><br>';
+                        echo 'license_url: <code>' . esc_html($license_url) . '</code></p></div>';
+                    } else {
+                        echo '<div class="notice notice-error"><p>License not found</p></div>';
                     }
                 }
                 break;
@@ -492,33 +511,46 @@ function fml_nft_monitor_page() {
                             <tr>
                                 <th>License ID</th>
                                 <th>Wallet</th>
-                                <th>Status</th>
+                                <th>Queue Status</th>
+                                <th>License Status</th>
                                 <th>Attempts</th>
-                                <th>Created</th>
-                                <th>Updated</th>
                                 <th>Error</th>
                                 <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
-                            <?php foreach (array_slice($nft_queue, 0, 50) as $item): ?>
+                            <?php foreach (array_slice($nft_queue, 0, 50) as $item):
+                                // Get actual license status from database
+                                $license_pod = pods('license', $item['license_id']);
+                                $db_nft_status = ($license_pod && $license_pod->exists()) ? ($license_pod->field('nft_status') ?: 'none') : 'not found';
+                                $db_wallet = ($license_pod && $license_pod->exists()) ? $license_pod->field('wallet_address') : '';
+                            ?>
                                 <tr>
                                     <td><a href="<?php echo admin_url('post.php?post=' . $item['license_id'] . '&action=edit'); ?>">#<?php echo esc_html($item['license_id']); ?></a></td>
-                                    <td><code class="fml-code"><?php echo esc_html(substr($item['wallet_address'], 0, 15) . '...'); ?></code></td>
-                                    <td><span class="fml-status-badge <?php echo esc_attr($item['status']); ?>"><?php echo esc_html($item['status']); ?></span></td>
-                                    <td><?php echo esc_html($item['attempts'] ?? 0); ?></td>
-                                    <td><?php echo esc_html($item['created_at']); ?></td>
-                                    <td><?php echo esc_html($item['updated_at']); ?></td>
-                                    <td><?php echo esc_html($item['error'] ?? '-'); ?></td>
                                     <td>
-                                        <?php if ($item['status'] === 'failed'): ?>
-                                            <form method="post" style="display: inline;">
-                                                <?php wp_nonce_field('fml_monitor_action'); ?>
-                                                <input type="hidden" name="fml_action" value="retry_nft">
-                                                <input type="hidden" name="license_id" value="<?php echo esc_attr($item['license_id']); ?>">
-                                                <button type="submit" class="button button-small">Retry</button>
-                                            </form>
+                                        <code class="fml-code" title="<?php echo esc_attr($item['wallet_address']); ?>"><?php echo esc_html(substr($item['wallet_address'], 0, 15) . '...'); ?></code>
+                                        <?php if ($db_wallet !== $item['wallet_address']): ?>
+                                            <br><small style="color: #f6e05e;">DB: <?php echo esc_html(substr($db_wallet, 0, 10) . '...'); ?></small>
                                         <?php endif; ?>
+                                    </td>
+                                    <td><span class="fml-status-badge <?php echo esc_attr($item['status']); ?>"><?php echo esc_html($item['status']); ?></span></td>
+                                    <td><span class="fml-status-badge <?php echo esc_attr($db_nft_status); ?>"><?php echo esc_html($db_nft_status); ?></span></td>
+                                    <td><?php echo esc_html($item['attempts'] ?? 0); ?></td>
+                                    <td style="max-width: 300px; word-break: break-word; font-size: 11px;"><?php echo esc_html($item['error'] ?? '-'); ?></td>
+                                    <td>
+                                        <form method="post" style="display: inline;">
+                                            <?php wp_nonce_field('fml_monitor_action'); ?>
+                                            <input type="hidden" name="fml_action" value="check_license_status">
+                                            <input type="hidden" name="license_id" value="<?php echo esc_attr($item['license_id']); ?>">
+                                            <button type="submit" class="button button-small">Check</button>
+                                        </form>
+                                        <form method="post" style="display: inline;">
+                                            <?php wp_nonce_field('fml_monitor_action'); ?>
+                                            <input type="hidden" name="fml_action" value="retry_nft">
+                                            <input type="hidden" name="license_id" value="<?php echo esc_attr($item['license_id']); ?>">
+                                            <input type="hidden" name="force_retry" value="1">
+                                            <button type="submit" class="button button-small button-primary">Force Retry</button>
+                                        </form>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
