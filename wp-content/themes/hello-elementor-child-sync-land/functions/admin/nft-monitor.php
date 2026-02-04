@@ -260,6 +260,20 @@ function fml_nft_monitor_page() {
                 fml_process_nft_queue_manually();
                 echo '<div class="notice notice-success"><p>Queue processing triggered.</p></div>';
                 break;
+
+            case 'run_cron':
+                $ran = fml_run_pending_cron_jobs();
+                echo '<div class="notice notice-success"><p>Ran ' . $ran . ' cron job(s).</p></div>';
+                break;
+
+            case 'run_single_cron':
+                $hook = sanitize_text_field($_POST['cron_hook'] ?? '');
+                $args = isset($_POST['cron_args']) ? json_decode(stripslashes($_POST['cron_args']), true) : [];
+                if ($hook) {
+                    do_action_ref_array($hook, $args ?: []);
+                    echo '<div class="notice notice-success"><p>Executed: ' . esc_html($hook) . '</p></div>';
+                }
+                break;
         }
     }
 
@@ -558,11 +572,37 @@ function fml_nft_monitor_page() {
             <div id="cron-jobs" class="fml-tab-content">
                 <h3>Scheduled Cron Jobs</h3>
 
+                <?php
+                // Check cron health
+                $cron_issues = fml_check_cron_health();
+                if (!empty($cron_issues)):
+                ?>
+                <div style="background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; padding: 15px; margin-bottom: 20px;">
+                    <strong style="color: #856404;"><span class="dashicons dashicons-warning"></span> Cron Health Issues Detected:</strong>
+                    <ul style="margin: 10px 0 0 20px; color: #856404;">
+                        <?php foreach ($cron_issues as $issue): ?>
+                            <li><?php echo esc_html($issue); ?></li>
+                        <?php endforeach; ?>
+                    </ul>
+                    <p style="margin: 10px 0 0; color: #856404;"><strong>Solution:</strong> Use the "Run All Due Cron Jobs" button below to manually process pending jobs.</p>
+                </div>
+                <?php endif; ?>
+
                 <p style="margin-bottom: 15px;">
                     <strong>Current Server Time:</strong>
                     <code class="fml-code"><?php echo date('Y-m-d H:i:s'); ?></code>
                     (<?php echo date('T'); ?>)
                 </p>
+
+                <form method="post" style="margin-bottom: 20px;">
+                    <?php wp_nonce_field('fml_monitor_action'); ?>
+                    <input type="hidden" name="fml_action" value="run_cron">
+                    <button type="submit" class="button button-primary">
+                        <span class="dashicons dashicons-controls-play" style="vertical-align: middle;"></span>
+                        Run All Due Cron Jobs
+                    </button>
+                    <span class="description" style="margin-left: 10px;">Manually execute all FML cron jobs that are ready to run</span>
+                </form>
 
                 <?php if (empty($fml_crons)): ?>
                     <p><em>No FML cron jobs scheduled.</em></p>
@@ -575,6 +615,7 @@ function fml_nft_monitor_page() {
                                 <th>Scheduled For</th>
                                 <th>Time Until Run</th>
                                 <th>Arguments</th>
+                                <th>Actions</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -607,6 +648,15 @@ function fml_nft_monitor_page() {
                                         <?php else: ?>
                                             -
                                         <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <form method="post" style="display: inline;">
+                                            <?php wp_nonce_field('fml_monitor_action'); ?>
+                                            <input type="hidden" name="fml_action" value="run_single_cron">
+                                            <input type="hidden" name="cron_hook" value="<?php echo esc_attr($cron['hook']); ?>">
+                                            <input type="hidden" name="cron_args" value="<?php echo esc_attr(json_encode($cron['args'])); ?>">
+                                            <button type="submit" class="button button-small">Run Now</button>
+                                        </form>
                                     </td>
                                 </tr>
                             <?php endforeach; ?>
@@ -874,4 +924,85 @@ function fml_process_nft_queue_manually() {
             fml_update_nft_queue_item($license_id, 'failed', 'Minting function not available');
         }
     }
+}
+
+/**
+ * Run all pending FML cron jobs manually
+ * This bypasses the WordPress cron system which can fail on local dev
+ */
+function fml_run_pending_cron_jobs() {
+    $cron_jobs = _get_cron_array();
+    $current_time = time();
+    $ran = 0;
+
+    if (!$cron_jobs) {
+        return 0;
+    }
+
+    foreach ($cron_jobs as $timestamp => $cron) {
+        // Only run jobs that are due
+        if ($timestamp > $current_time) {
+            continue;
+        }
+
+        foreach ($cron as $hook => $data) {
+            // Only process FML hooks
+            if (strpos($hook, 'fml_') !== 0) {
+                continue;
+            }
+
+            foreach ($data as $key => $item) {
+                $args = $item['args'] ?? [];
+
+                // Log what we're running
+                error_log("Manually running cron: {$hook} with args: " . json_encode($args));
+
+                // Execute the hook
+                do_action_ref_array($hook, $args);
+
+                // Unschedule this specific event
+                wp_unschedule_event($timestamp, $hook, $args);
+
+                $ran++;
+
+                // Log to our system
+                if (function_exists('fml_log_event')) {
+                    fml_log_event('cron', "Manually executed: {$hook}", ['args' => $args], 'success');
+                }
+            }
+        }
+    }
+
+    return $ran;
+}
+
+/**
+ * Check if WordPress cron system is healthy
+ */
+function fml_check_cron_health() {
+    $issues = [];
+
+    // Check if cron is disabled
+    if (defined('DISABLE_WP_CRON') && DISABLE_WP_CRON) {
+        $issues[] = 'DISABLE_WP_CRON is set to true - WordPress cron will not run automatically';
+    }
+
+    // Check if we can reach ourselves (loopback test)
+    $loopback_url = site_url('wp-cron.php');
+    $response = wp_remote_get($loopback_url, [
+        'timeout' => 5,
+        'sslverify' => false
+    ]);
+
+    if (is_wp_error($response)) {
+        $issues[] = 'Loopback request failed: ' . $response->get_error_message() . ' - Cron jobs may not fire automatically';
+    }
+
+    // Check for stuck cron
+    $doing_cron = get_transient('doing_cron');
+    if ($doing_cron && ($doing_cron > (time() - 60))) {
+        $issues[] = 'A cron process appears to be running (or stuck)';
+    }
+
+    return $issues;
 }
