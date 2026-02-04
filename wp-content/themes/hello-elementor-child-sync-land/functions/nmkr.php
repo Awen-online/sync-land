@@ -820,8 +820,12 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
 
     error_log("Preview image URL: {$song_image}");
 
-    // Generate unique token name
-    $token_name = 'SyncLicense_' . $license_id . '_' . time();
+    // Generate unique token name - must be short (Cardano has 32 byte limit)
+    // Format: SL_{license_id}_{short_timestamp}
+    $short_time = base_convert(time(), 10, 36); // Convert timestamp to base36 (shorter)
+    $token_name = 'SL' . $license_id . '_' . $short_time;
+
+    error_log("Token name: {$token_name} (length: " . strlen($token_name) . " chars)");
 
     // Format datetime for display
     $issue_date = !empty($datetime) ? date('Y-m-d', strtotime($datetime)) : date('Y-m-d');
