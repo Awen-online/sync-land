@@ -796,20 +796,22 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
         }
     }
 
-    // Upload license PDF to IPFS first
-    $ipfs_filename = sanitize_file_name("SyncLicense_{$artist_name}_{$song_title}_{$license_id}.pdf");
+    // Upload license PDF to IPFS first - this gives us a short hash that fits in CIP-25 metadata
+    $ipfs_filename = sanitize_file_name("SyncLicense_{$license_id}.pdf");
     $ipfs_result = fml_upload_license_pdf_to_ipfs($license_url, $ipfs_filename);
 
     $ipfs_hash = null;
     $ipfs_url = null;
+    $license_pdf_for_metadata = $license_url; // Fallback to S3 URL
 
     if ($ipfs_result['success']) {
         $ipfs_hash = $ipfs_result['ipfs_hash'];
-        $ipfs_url = $ipfs_result['ipfs_url'];
-        error_log("License PDF uploaded to IPFS: {$ipfs_hash}");
+        $ipfs_url = $ipfs_result['ipfs_url']; // Format: ipfs://QmHash...
+        $license_pdf_for_metadata = $ipfs_url; // Use IPFS URL in metadata (fits in 64 bytes!)
+        error_log("License PDF uploaded to IPFS: {$ipfs_url} (hash: {$ipfs_hash})");
     } else {
         error_log("IPFS upload failed for license {$license_id}: " . ($ipfs_result['error'] ?? 'Unknown error'));
-        // Continue with minting using direct URL as fallback
+        error_log("Will use S3 URL as fallback (may be truncated in metadata)");
     }
 
     // Get song image for NFT visual
@@ -1012,7 +1014,7 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
             ['name' => 'media_types', 'value' => 'All Media'],
             ['name' => 'term', 'value' => 'Perpetual'],
             ['name' => 'usage_duration', 'value' => 'Unlimited'],
-            ['name' => 'license_pdf', 'value' => fml_truncate_metadata_string($license_url ?: 'N/A')]
+            ['name' => 'license_pdf', 'value' => $license_pdf_for_metadata ?: 'N/A']  // IPFS URL fits in 64 bytes
         ],
         'previewImageNft' => $preview_image_data
     ];
