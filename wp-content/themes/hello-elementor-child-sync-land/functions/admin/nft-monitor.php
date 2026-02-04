@@ -245,9 +245,13 @@ function fml_nft_monitor_page() {
                 if ($license_id && function_exists('fml_retry_failed_nft_minting')) {
                     $result = fml_retry_failed_nft_minting($license_id, $force);
                     if ($result['success']) {
-                        echo '<div class="notice notice-success"><p>NFT minting succeeded! TX: ' . esc_html($result['data']['transaction_hash'] ?? 'pending') . '</p></div>';
+                        echo '<div class="notice notice-success fml-persist-notice"><p><strong>NFT minting succeeded!</strong><br>TX: ' . esc_html($result['data']['transaction_hash'] ?? 'pending') . '</p></div>';
                     } else {
-                        echo '<div class="notice notice-error"><p>Retry failed: ' . esc_html($result['error'] ?? 'Unknown error') . '</p></div>';
+                        $error_msg = $result['error'] ?? 'Unknown error';
+                        if (isset($result['response'])) {
+                            $error_msg .= '<br><small>Response: ' . esc_html(json_encode($result['response'])) . '</small>';
+                        }
+                        echo '<div class="notice notice-error fml-persist-notice"><p><strong>Retry failed:</strong><br>' . $error_msg . '</p></div>';
                     }
                 }
                 break;
@@ -257,15 +261,25 @@ function fml_nft_monitor_page() {
                 if ($license_id) {
                     $license_pod = pods('license', $license_id);
                     if ($license_pod && $license_pod->exists()) {
-                        $status = $license_pod->field('nft_status') ?: '(empty)';
-                        $wallet = $license_pod->field('wallet_address') ?: '(none)';
-                        $license_url = $license_pod->field('license_url') ?: '(none)';
-                        echo '<div class="notice notice-info"><p><strong>License #' . $license_id . ' Status:</strong><br>';
+                        $status = $license_pod->field('nft_status');
+                        $wallet = $license_pod->field('wallet_address');
+                        $license_url = $license_pod->field('license_url');
+
+                        // Parse arrays to strings
+                        if (is_array($status)) $status = implode(', ', $status) ?: '(empty array)';
+                        if (is_array($wallet)) $wallet = implode(', ', $wallet) ?: '(empty array)';
+                        if (is_array($license_url)) $license_url = implode(', ', $license_url) ?: '(empty array)';
+
+                        $status = $status ?: '(empty)';
+                        $wallet = $wallet ?: '(none)';
+                        $license_url = $license_url ?: '(none)';
+
+                        echo '<div class="notice notice-info is-dismissible" style="position: relative;"><p><strong>License #' . $license_id . ' Status:</strong><br>';
                         echo 'nft_status: <code>' . esc_html($status) . '</code><br>';
                         echo 'wallet_address: <code>' . esc_html($wallet) . '</code><br>';
-                        echo 'license_url: <code>' . esc_html($license_url) . '</code></p></div>';
+                        echo 'license_url: <code style="word-break: break-all;">' . esc_html($license_url) . '</code></p></div>';
                     } else {
-                        echo '<div class="notice notice-error"><p>License not found</p></div>';
+                        echo '<div class="notice notice-error is-dismissible"><p>License not found</p></div>';
                     }
                 }
                 break;
@@ -416,6 +430,20 @@ function fml_nft_monitor_page() {
                 font-size: 12px;
             }
 
+            /* Prevent notices from auto-dismissing */
+            .fml-persist-notice {
+                position: relative !important;
+            }
+            .fml-persist-notice p {
+                max-width: 100%;
+                word-break: break-word;
+            }
+            .fml-persist-notice small {
+                display: block;
+                margin-top: 5px;
+                color: #666;
+            }
+
             .fml-mode-indicator {
                 padding: 5px 10px;
                 border-radius: 4px;
@@ -522,19 +550,35 @@ function fml_nft_monitor_page() {
                             <?php foreach (array_slice($nft_queue, 0, 50) as $item):
                                 // Get actual license status from database
                                 $license_pod = pods('license', $item['license_id']);
-                                $db_nft_status = ($license_pod && $license_pod->exists()) ? ($license_pod->field('nft_status') ?: 'none') : 'not found';
-                                $db_wallet = ($license_pod && $license_pod->exists()) ? $license_pod->field('wallet_address') : '';
 
-                                // Handle wallet address being array or string
+                                // Get and parse nft_status (handle array)
+                                $db_nft_status = 'not found';
+                                if ($license_pod && $license_pod->exists()) {
+                                    $raw_status = $license_pod->field('nft_status');
+                                    if (is_array($raw_status)) {
+                                        $db_nft_status = !empty($raw_status) ? implode(', ', $raw_status) : 'none';
+                                    } else {
+                                        $db_nft_status = $raw_status ?: 'none';
+                                    }
+                                }
+
+                                // Get and parse wallet address (handle array)
+                                $db_wallet = '';
+                                if ($license_pod && $license_pod->exists()) {
+                                    $raw_wallet = $license_pod->field('wallet_address');
+                                    if (is_array($raw_wallet)) {
+                                        $db_wallet = !empty($raw_wallet) ? $raw_wallet[0] : '';
+                                    } else {
+                                        $db_wallet = $raw_wallet ?: '';
+                                    }
+                                }
+
+                                // Handle wallet address being array or string from queue
                                 $queue_wallet = $item['wallet_address'] ?? '';
                                 if (is_array($queue_wallet)) {
                                     $queue_wallet = $queue_wallet[0] ?? json_encode($queue_wallet);
                                 }
                                 $queue_wallet = (string) $queue_wallet;
-
-                                if (is_array($db_wallet)) {
-                                    $db_wallet = $db_wallet[0] ?? '';
-                                }
                                 $db_wallet = (string) $db_wallet;
                             ?>
                                 <tr>
@@ -857,6 +901,14 @@ function fml_nft_monitor_page() {
                 var tab = window.location.hash.substring(1);
                 $('[data-tab="' + tab + '"]').click();
             }
+
+            // Prevent WordPress from auto-dismissing our notices
+            $('.fml-persist-notice').removeClass('is-dismissible');
+
+            // Make sure notices stay visible
+            setTimeout(function() {
+                $('.fml-persist-notice').show();
+            }, 100);
         });
         </script>
     </div>
