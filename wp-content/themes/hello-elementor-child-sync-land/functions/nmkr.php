@@ -611,24 +611,42 @@ function fml_get_license_nft_status(WP_REST_Request $request) {
  * @return array Result with IPFS hash or error
  */
 function fml_upload_license_pdf_to_ipfs($pdf_url, $filename = '') {
+    error_log("=== IPFS Upload Starting ===");
+    error_log("PDF URL: {$pdf_url}");
+
     $creds = fml_get_nmkr_credentials();
     if (!$creds['success']) {
+        error_log("IPFS Upload failed: No NMKR credentials");
         return ['success' => false, 'error' => $creds['error']];
     }
 
     // Download PDF content
-    $pdf_response = wp_remote_get($pdf_url, ['timeout' => 30]);
+    error_log("Downloading PDF from S3...");
+    $pdf_response = wp_remote_get($pdf_url, ['timeout' => 30, 'sslverify' => false]);
     if (is_wp_error($pdf_response)) {
+        error_log("IPFS Upload failed: Could not download PDF - " . $pdf_response->get_error_message());
         return ['success' => false, 'error' => 'Failed to download PDF: ' . $pdf_response->get_error_message()];
+    }
+
+    $download_code = wp_remote_retrieve_response_code($pdf_response);
+    error_log("PDF download response: HTTP {$download_code}");
+
+    if ($download_code !== 200) {
+        error_log("IPFS Upload failed: PDF download returned HTTP {$download_code}");
+        return ['success' => false, 'error' => "PDF download failed with HTTP {$download_code}"];
     }
 
     $pdf_content = wp_remote_retrieve_body($pdf_response);
     if (empty($pdf_content)) {
+        error_log("IPFS Upload failed: PDF content is empty");
         return ['success' => false, 'error' => 'PDF content is empty'];
     }
 
+    error_log("PDF downloaded successfully. Size: " . strlen($pdf_content) . " bytes");
+
     // Convert to base64
     $pdf_base64 = base64_encode($pdf_content);
+    error_log("PDF encoded to base64. Length: " . strlen($pdf_base64));
 
     // Generate filename if not provided
     if (empty($filename)) {
@@ -637,6 +655,7 @@ function fml_upload_license_pdf_to_ipfs($pdf_url, $filename = '') {
 
     // Upload to IPFS via NMKR API
     $api_url = $creds['api_url'] . '/v2/UploadToIpfs';
+    error_log("Uploading to NMKR IPFS: {$api_url}");
 
     $data = [
         'fileFromBase64' => $pdf_base64,
@@ -654,23 +673,40 @@ function fml_upload_license_pdf_to_ipfs($pdf_url, $filename = '') {
     ]);
 
     if (is_wp_error($response)) {
+        error_log("IPFS Upload failed: " . $response->get_error_message());
         return ['success' => false, 'error' => 'IPFS upload failed: ' . $response->get_error_message()];
     }
 
     $http_code = wp_remote_retrieve_response_code($response);
-    $body = json_decode(wp_remote_retrieve_body($response), true);
+    $raw_body = wp_remote_retrieve_body($response);
+    $body = json_decode($raw_body, true);
+
+    error_log("NMKR IPFS response: HTTP {$http_code}");
+    error_log("NMKR IPFS body: " . substr($raw_body, 0, 500));
 
     if ($http_code == 200 || $http_code == 201) {
+        $ipfs_hash = $body['ipfsHash'] ?? $body['ipfs_hash'] ?? $body['IpfsHash'] ?? null;
+
+        if (empty($ipfs_hash)) {
+            error_log("IPFS Upload: Success response but no hash found in: " . $raw_body);
+            return ['success' => false, 'error' => 'No IPFS hash in response', 'response' => $body];
+        }
+
+        $ipfs_url = 'ipfs://' . $ipfs_hash;
+        error_log("=== IPFS Upload SUCCESS: {$ipfs_url} ===");
+
         return [
             'success' => true,
-            'ipfs_hash' => $body['ipfsHash'] ?? $body['ipfs_hash'] ?? null,
-            'ipfs_url' => 'ipfs://' . ($body['ipfsHash'] ?? $body['ipfs_hash'] ?? ''),
-            'gateway_url' => 'https://ipfs.io/ipfs/' . ($body['ipfsHash'] ?? $body['ipfs_hash'] ?? '')
+            'ipfs_hash' => $ipfs_hash,
+            'ipfs_url' => $ipfs_url,
+            'gateway_url' => 'https://ipfs.io/ipfs/' . $ipfs_hash
         ];
     } else {
+        $error_msg = $body['message'] ?? $body['error'] ?? $body['errorMessage'] ?? "HTTP {$http_code}";
+        error_log("IPFS Upload failed: {$error_msg}");
         return [
             'success' => false,
-            'error' => 'IPFS upload failed',
+            'error' => "IPFS upload failed: {$error_msg}",
             'http_code' => $http_code,
             'response' => $body
         ];
@@ -808,10 +844,19 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
         $ipfs_hash = $ipfs_result['ipfs_hash'];
         $ipfs_url = $ipfs_result['ipfs_url']; // Format: ipfs://QmHash...
         $license_pdf_for_metadata = $ipfs_url; // Use IPFS URL in metadata (fits in 64 bytes!)
-        error_log("License PDF uploaded to IPFS: {$ipfs_url} (hash: {$ipfs_hash})");
+        error_log("*** License PDF uploaded to IPFS: {$ipfs_url} ***");
     } else {
-        error_log("IPFS upload failed for license {$license_id}: " . ($ipfs_result['error'] ?? 'Unknown error'));
-        error_log("Will use S3 URL as fallback (may be truncated in metadata)");
+        $ipfs_error = $ipfs_result['error'] ?? 'Unknown error';
+        error_log("*** IPFS upload FAILED: {$ipfs_error} ***");
+        error_log("*** Falling back to S3 URL (will be truncated!) ***");
+
+        // Log to our monitoring system too
+        if (function_exists('fml_log_event')) {
+            fml_log_event('nft', "IPFS upload failed for license #{$license_id}", [
+                'error' => $ipfs_error,
+                's3_url' => $license_url
+            ], 'warning');
+        }
     }
 
     // Get song image for NFT visual
