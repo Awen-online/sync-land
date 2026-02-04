@@ -924,6 +924,38 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
         $image_mimetype = 'image/webp';
     }
 
+    error_log("Attempting to download image for Base64 encoding: " . $song_image);
+
+    // Download image and convert to Base64 (more reliable than URL for NMKR)
+    $image_base64 = null;
+    $image_response = wp_remote_get($song_image, ['timeout' => 30, 'sslverify' => false]);
+
+    if (!is_wp_error($image_response) && wp_remote_retrieve_response_code($image_response) === 200) {
+        $image_data = wp_remote_retrieve_body($image_response);
+        if (!empty($image_data)) {
+            $image_base64 = base64_encode($image_data);
+            error_log("Image downloaded and encoded. Base64 length: " . strlen($image_base64));
+        }
+    } else {
+        $error_msg = is_wp_error($image_response) ? $image_response->get_error_message() : 'HTTP ' . wp_remote_retrieve_response_code($image_response);
+        error_log("Failed to download image: " . $error_msg);
+    }
+
+    // Build the previewImageNft object
+    $preview_image_data = [
+        'mimetype' => $image_mimetype,
+        'displayname' => 'License Preview'
+    ];
+
+    // Use Base64 if we have it, otherwise fall back to URL
+    if ($image_base64) {
+        $preview_image_data['fileFromBase64'] = $image_base64;
+        error_log("Using Base64 encoded image for NMKR upload");
+    } else {
+        $preview_image_data['fileFromUrl'] = $song_image;
+        error_log("Using URL for NMKR upload (Base64 fallback failed): " . $song_image);
+    }
+
     $upload_data = [
         'tokenname' => $token_name,
         'displayname' => "Sync License: {$artist_name} - {$song_title}",
@@ -961,11 +993,7 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
                 'value' => 'Sync.Land'
             ]
         ],
-        'previewImageNft' => [
-            'mimetype' => $image_mimetype,
-            'fileFromUrl' => $song_image,
-            'displayname' => 'License Preview'
-        ]
+        'previewImageNft' => $preview_image_data
     ];
 
     // Add subfile (license PDF) if we have a public URL
@@ -979,21 +1007,6 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
                 ]
             ]
         ];
-    }
-
-    error_log("Upload data preview image: " . $song_image);
-    error_log("Upload data mimetype: " . $image_mimetype);
-
-    // Verify image URL is accessible
-    $image_check = wp_remote_head($song_image, ['timeout' => 10, 'sslverify' => false]);
-    if (is_wp_error($image_check)) {
-        error_log("WARNING: Image URL may not be accessible: " . $image_check->get_error_message());
-    } else {
-        $image_status = wp_remote_retrieve_response_code($image_check);
-        error_log("Image URL check: HTTP {$image_status}");
-        if ($image_status !== 200) {
-            error_log("WARNING: Image URL returned non-200 status");
-        }
     }
 
     error_log("=== NMKR Upload NFT Request ===");
