@@ -167,11 +167,16 @@ add_action('rest_api_init', function() {
 
 /**
  * Handle incoming Stripe webhooks
+ *
+ * IMPORTANT: This handler must respond QUICKLY (< 5 seconds) to avoid timeouts.
+ * Heavy processing (PDF generation, license creation, NFT minting) is deferred
+ * to background tasks via wp_schedule_single_event().
  */
 function fml_stripe_webhook_handler(WP_REST_Request $request) {
     // Get the raw body for signature verification
     $payload = $request->get_body();
     $sig_header = $_SERVER['HTTP_STRIPE_SIGNATURE'] ?? '';
+    $event_id = 'unknown';
 
     // Verify webhook secret is configured
     $webhook_secret = fml_get_stripe_webhook_secret();
@@ -183,16 +188,27 @@ function fml_stripe_webhook_handler(WP_REST_Request $request) {
     // Verify webhook signature
     try {
         $event = fml_verify_stripe_webhook($payload, $sig_header, $webhook_secret);
+        $event_id = $event['id'] ?? 'unknown';
     } catch (Exception $e) {
         error_log('Stripe webhook signature verification failed: ' . $e->getMessage());
+        // Track the failed webhook
+        if (function_exists('fml_track_webhook_event')) {
+            fml_track_webhook_event('signature_failed', $event_id, 'failed', ['error' => $e->getMessage()]);
+        }
         return new WP_REST_Response(['error' => 'Invalid signature'], 400);
     }
 
-    // Handle the event
+    // Track the webhook event
+    if (function_exists('fml_track_webhook_event')) {
+        fml_track_webhook_event($event['type'], $event_id, 'received');
+    }
+
+    // Handle the event - DEFER heavy processing to background
     switch ($event['type']) {
         case 'checkout.session.completed':
             $session = $event['data']['object'];
-            fml_handle_checkout_completed($session);
+            // Store session data and schedule background processing
+            fml_queue_checkout_processing($session, $event_id);
             break;
 
         case 'payment_intent.succeeded':
@@ -209,7 +225,94 @@ function fml_stripe_webhook_handler(WP_REST_Request $request) {
             error_log('Unhandled Stripe event type: ' . $event['type']);
     }
 
+    // Return 200 immediately - processing happens in background
     return new WP_REST_Response(['received' => true], 200);
+}
+
+/**
+ * Queue checkout session for background processing
+ *
+ * This ensures webhook responds quickly while heavy work happens async.
+ */
+function fml_queue_checkout_processing($session, $event_id) {
+    $session_id = $session['id'];
+
+    // Store the session data in a transient for background processing
+    set_transient('fml_webhook_session_' . $session_id, [
+        'session' => $session,
+        'event_id' => $event_id,
+        'received_at' => current_time('mysql')
+    ], HOUR_IN_SECONDS);
+
+    // Schedule background processing in 5 seconds
+    wp_schedule_single_event(time() + 5, 'fml_process_checkout_session_async', [$session_id]);
+
+    error_log("Checkout session {$session_id} queued for background processing");
+
+    // Track webhook as processing
+    if (function_exists('fml_track_webhook_event')) {
+        fml_track_webhook_event('checkout.session.completed', $event_id, 'processing', [
+            'session_id' => $session_id
+        ]);
+    }
+}
+
+// Register the async processing action
+add_action('fml_process_checkout_session_async', 'fml_process_checkout_session_background');
+
+/**
+ * Process checkout session in background
+ */
+function fml_process_checkout_session_background($session_id) {
+    error_log("Processing checkout session {$session_id} in background");
+
+    // Retrieve stored session data
+    $data = get_transient('fml_webhook_session_' . $session_id);
+    if (!$data) {
+        error_log("Checkout session {$session_id} data not found in transient");
+        return;
+    }
+
+    $session = $data['session'];
+    $event_id = $data['event_id'];
+
+    try {
+        // Process the checkout
+        fml_handle_checkout_completed($session);
+
+        // Track success
+        if (function_exists('fml_track_webhook_event')) {
+            fml_track_webhook_event('checkout.session.completed', $event_id, 'completed', [
+                'session_id' => $session_id
+            ]);
+        }
+
+        // Log success
+        if (function_exists('fml_log_event')) {
+            fml_log_event('webhook', "Checkout session {$session_id} processed successfully", [], 'success');
+        }
+
+    } catch (Exception $e) {
+        error_log("Error processing checkout session {$session_id}: " . $e->getMessage());
+
+        // Track failure
+        if (function_exists('fml_track_webhook_event')) {
+            fml_track_webhook_event('checkout.session.completed', $event_id, 'failed', [
+                'session_id' => $session_id,
+                'error' => $e->getMessage()
+            ]);
+        }
+
+        // Log error
+        if (function_exists('fml_log_event')) {
+            fml_log_event('webhook', "Checkout session {$session_id} processing failed", [
+                'error' => $e->getMessage()
+            ], 'error');
+        }
+    }
+
+    // Clean up transient
+    delete_transient('fml_webhook_session_' . $session_id);
 }
 
 /**
@@ -1604,6 +1707,15 @@ function fml_handle_cart_checkout_completed($session) {
 
             error_log("License created: {$new_license_id} for song {$song_id} (type: {$license_type}, nft: " . ($include_nft ? 'yes' : 'no') . ")");
 
+            // Log license creation
+            if (function_exists('fml_log_event')) {
+                fml_log_event('license', "License #{$new_license_id} created for song #{$song_id}", [
+                    'license_type' => $license_type,
+                    'song_name' => $song_name,
+                    'include_nft' => $include_nft
+                ], 'success');
+            }
+
             // Queue NFT minting if selected
             if ($include_nft && !empty($wallet_address)) {
                 fml_queue_license_nft_minting($new_license_id, $wallet_address);
@@ -1646,6 +1758,11 @@ function fml_handle_cart_checkout_completed($session) {
  * Queue NFT minting for a license (async processing)
  */
 function fml_queue_license_nft_minting($license_id, $wallet_address) {
+    // Add to NFT queue for tracking
+    if (function_exists('fml_add_to_nft_queue')) {
+        fml_add_to_nft_queue($license_id, $wallet_address);
+    }
+
     // Schedule NFT minting as a background task
     wp_schedule_single_event(time() + 30, 'fml_mint_license_nft_async', [$license_id, $wallet_address]);
 
@@ -1658,22 +1775,57 @@ add_action('fml_mint_license_nft_async', 'fml_process_queued_nft_minting', 10, 2
 function fml_process_queued_nft_minting($license_id, $wallet_address) {
     error_log("Processing queued NFT minting for license {$license_id}");
 
+    // Update queue status to processing
+    if (function_exists('fml_update_nft_queue_item')) {
+        fml_update_nft_queue_item($license_id, 'processing');
+    }
+
     // Call the minting function from nmkr.php
     if (function_exists('fml_mint_license_nft')) {
         $result = fml_mint_license_nft($license_id, $wallet_address);
 
         if ($result['success']) {
             error_log("NFT minted successfully for license {$license_id}");
+
+            // Update queue status to completed
+            if (function_exists('fml_update_nft_queue_item')) {
+                fml_update_nft_queue_item($license_id, 'completed');
+            }
+
+            // Log success
+            if (function_exists('fml_log_event')) {
+                fml_log_event('nft', "NFT minted for license #{$license_id}", [
+                    'transaction_id' => $result['data']['transaction_id'] ?? null
+                ], 'success');
+            }
         } else {
-            error_log("NFT minting failed for license {$license_id}: " . ($result['error'] ?? 'Unknown error'));
+            $error_msg = $result['error'] ?? 'Unknown error';
+            error_log("NFT minting failed for license {$license_id}: " . $error_msg);
+
+            // Update queue status to failed
+            if (function_exists('fml_update_nft_queue_item')) {
+                fml_update_nft_queue_item($license_id, 'failed', $error_msg);
+            }
 
             // Update license status to reflect failure
             $license_pod = pods('license', $license_id);
             if ($license_pod && $license_pod->exists()) {
                 $license_pod->save(['nft_status' => 'failed']);
             }
+
+            // Log failure
+            if (function_exists('fml_log_event')) {
+                fml_log_event('nft', "NFT minting failed for license #{$license_id}", [
+                    'error' => $error_msg
+                ], 'error');
+            }
         }
     } else {
         error_log("fml_mint_license_nft function not available");
+
+        // Update queue status
+        if (function_exists('fml_update_nft_queue_item')) {
+            fml_update_nft_queue_item($license_id, 'failed', 'Minting function not available');
+        }
     }
 }

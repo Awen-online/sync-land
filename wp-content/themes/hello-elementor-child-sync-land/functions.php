@@ -208,3 +208,6 @@ require get_stylesheet_directory().'/functions/api/search.php';
 // Shopping Cart System
 require get_stylesheet_directory().'/functions/cart.php';
 require get_stylesheet_directory().'/functions/shortcodes/cart-shortcodes.php';
+
+// Admin monitoring pages
+require get_stylesheet_directory().'/functions/admin/nft-monitor.php';
