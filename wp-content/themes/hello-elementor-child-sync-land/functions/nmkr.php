@@ -653,8 +653,8 @@ function fml_upload_license_pdf_to_ipfs($pdf_url, $filename = '') {
         $filename = 'license_' . time() . '.pdf';
     }
 
-    // Upload to IPFS via NMKR API (requires project UID in path)
-    $api_url = $creds['api_url'] . '/v2/UploadToIPFS/' . $creds['project_uid'];
+    // Upload to IPFS via NMKR API (no project UID needed - just uses API key auth)
+    $api_url = $creds['api_url'] . '/v2/UploadToIPFS';
     error_log("Uploading to NMKR IPFS: {$api_url}");
 
     // NMKR API field names (try lowercase as per their API spec)
