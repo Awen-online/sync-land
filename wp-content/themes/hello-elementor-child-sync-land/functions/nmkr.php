@@ -691,6 +691,17 @@ function fml_upload_license_pdf_to_ipfs($pdf_url, $filename = '') {
  * @param string $wallet_address The recipient's Cardano wallet address
  * @return array Result with success status and data/error
  */
+/**
+ * Helper to get a single value from a Pods field (handles arrays)
+ */
+function fml_get_pod_value($pod, $field) {
+    $value = $pod->field($field);
+    if (is_array($value)) {
+        return $value[0] ?? '';
+    }
+    return $value ?: '';
+}
+
 function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
     error_log("=== Starting NFT mint for license #{$license_id} ===");
 
@@ -701,7 +712,15 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
         return ['success' => false, 'error' => 'License not found'];
     }
 
-    // Validate wallet address
+    // Handle wallet address - could be passed in or from database
+    if (empty($wallet_address)) {
+        $wallet_address = fml_get_pod_value($license_pod, 'wallet_address');
+    }
+    // Handle if it's still an array
+    if (is_array($wallet_address)) {
+        $wallet_address = $wallet_address[0] ?? '';
+    }
+
     if (empty($wallet_address)) {
         error_log("NFT mint failed: No wallet address provided for license #{$license_id}");
         return ['success' => false, 'error' => 'No wallet address provided'];
@@ -719,8 +738,8 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
     error_log("NMKR Mode: " . $creds['mode']);
     error_log("NMKR API URL: " . $creds['api_url']);
 
-    // Get license data
-    $license_url = $license_pod->field('license_url');
+    // Get license data - handle arrays from Pods
+    $license_url = fml_get_pod_value($license_pod, 'license_url');
 
     // Validate license URL exists and is accessible
     if (empty($license_url)) {
@@ -784,9 +803,22 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
         $album_id = is_array($album_data) ? $album_data['ID'] : $album_data;
         $song_image = get_the_post_thumbnail_url($album_id, 'full');
     }
+
+    // Fallback to default image - MUST be a publicly accessible URL
+    $default_image = 'https://www.sync.land/wp-content/uploads/2024/06/cropped-SyncLand-Logo-optimized-150x150.png';
+
     if (empty($song_image)) {
-        $song_image = 'https://www.sync.land/wp-content/uploads/2024/06/cropped-SyncLand-Logo-optimized-150x150.png';
+        $song_image = $default_image;
+        error_log("Using default image - no album art found");
     }
+
+    // Check if image URL is local (NMKR can't access it)
+    if (strpos($song_image, '.local') !== false || strpos($song_image, 'localhost') !== false) {
+        error_log("Song image is local URL, using default: {$song_image}");
+        $song_image = $default_image;
+    }
+
+    error_log("Preview image URL: {$song_image}");
 
     // Generate unique token name
     $token_name = 'SyncLicense_' . $license_id . '_' . time();
@@ -881,6 +913,17 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
     // ========================================
     $upload_url = $creds['api_url'] . '/v2/UploadNft/' . $creds['project_uid'];
 
+    // Determine image mime type
+    $image_ext = strtolower(pathinfo(parse_url($song_image, PHP_URL_PATH), PATHINFO_EXTENSION));
+    $image_mimetype = 'image/png';
+    if ($image_ext === 'jpg' || $image_ext === 'jpeg') {
+        $image_mimetype = 'image/jpeg';
+    } elseif ($image_ext === 'gif') {
+        $image_mimetype = 'image/gif';
+    } elseif ($image_ext === 'webp') {
+        $image_mimetype = 'image/webp';
+    }
+
     $upload_data = [
         'tokenname' => $token_name,
         'displayname' => "Sync License: {$artist_name} - {$song_title}",
@@ -919,8 +962,9 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
             ]
         ],
         'previewImageNft' => [
-            'mimetype' => 'image/png',
-            'fileFromUrl' => $song_image
+            'mimetype' => $image_mimetype,
+            'fileFromUrl' => $song_image,
+            'displayname' => 'License Preview'
         ]
     ];
 
@@ -930,10 +974,26 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
             [
                 'subfile' => [
                     'mimetype' => 'application/pdf',
-                    'fileFromUrl' => $license_url
+                    'fileFromUrl' => $license_url,
+                    'displayname' => 'License Agreement PDF'
                 ]
             ]
         ];
+    }
+
+    error_log("Upload data preview image: " . $song_image);
+    error_log("Upload data mimetype: " . $image_mimetype);
+
+    // Verify image URL is accessible
+    $image_check = wp_remote_head($song_image, ['timeout' => 10, 'sslverify' => false]);
+    if (is_wp_error($image_check)) {
+        error_log("WARNING: Image URL may not be accessible: " . $image_check->get_error_message());
+    } else {
+        $image_status = wp_remote_retrieve_response_code($image_check);
+        error_log("Image URL check: HTTP {$image_status}");
+        if ($image_status !== 200) {
+            error_log("WARNING: Image URL returned non-200 status");
+        }
     }
 
     error_log("=== NMKR Upload NFT Request ===");
