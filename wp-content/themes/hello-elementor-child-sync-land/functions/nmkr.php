@@ -1057,19 +1057,34 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
     // ========================================
     // STEP 2: Mint and Send the NFT
     // ========================================
-    $mint_url = $creds['api_url'] . '/v2/MintAndSendSpecific/' . $creds['project_uid'] . '/' . $nft_uid . '/1/' . $wallet_address;
+    // NMKR API: POST /v2/MintAndSendSpecific/{projectUid}/{nftUid}/{tokencount}/{receiverAddress}
+    $mint_url = $creds['api_url'] . '/v2/MintAndSendSpecific/' . $creds['project_uid'] . '/' . $nft_uid . '/1/' . urlencode($wallet_address);
 
     error_log("=== NMKR Mint Request ===");
     error_log("Mint URL: {$mint_url}");
 
-    $mint_response = wp_remote_post($mint_url, [
+    // Try with no body first (some NMKR endpoints don't expect a body)
+    $mint_response = wp_remote_request($mint_url, [
+        'method' => 'POST',
         'headers' => [
             'Authorization' => 'Bearer ' . $creds['api_key'],
-            'Content-Type' => 'application/json'
+            'Accept' => 'application/json'
         ],
-        'body' => '{}',
         'timeout' => 120
     ]);
+
+    // If 405, try GET method as some NMKR endpoints use GET
+    $mint_http_code = wp_remote_retrieve_response_code($mint_response);
+    if ($mint_http_code == 405) {
+        error_log("POST returned 405, trying GET method...");
+        $mint_response = wp_remote_get($mint_url, [
+            'headers' => [
+                'Authorization' => 'Bearer ' . $creds['api_key'],
+                'Accept' => 'application/json'
+            ],
+            'timeout' => 120
+        ]);
+    }
 
     if (is_wp_error($mint_response)) {
         $license_pod->save(['nft_status' => 'failed']);
