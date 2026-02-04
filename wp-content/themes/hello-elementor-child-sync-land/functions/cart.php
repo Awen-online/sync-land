@@ -340,19 +340,19 @@ function fml_cart_get_summary() {
  * Validate Cardano wallet address format
  */
 function fml_validate_cardano_address($address) {
-    // Basic validation: Cardano addresses start with addr1 (mainnet) or addr_test1 (testnet)
-    // and are typically 58-103 characters
+    // Basic validation: Cardano addresses start with addr1 (mainnet) or addr_test1 (testnet/preprod)
+    // Address lengths can vary significantly based on stake key inclusion
     if (empty($address)) {
         return false;
     }
 
     // Mainnet address (addr1...)
-    if (preg_match('/^addr1[a-z0-9]{53,98}$/i', $address)) {
+    if (preg_match('/^addr1[a-z0-9]{50,150}$/i', $address)) {
         return true;
     }
 
-    // Testnet address (addr_test1...)
-    if (preg_match('/^addr_test1[a-z0-9]{50,95}$/i', $address)) {
+    // Testnet/Preprod address (addr_test1...)
+    if (preg_match('/^addr_test1[a-z0-9]{50,150}$/i', $address)) {
         return true;
     }
 
