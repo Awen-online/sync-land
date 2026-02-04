@@ -1806,11 +1806,25 @@ function fml_process_queued_nft_minting($license_id, $wallet_address) {
             }
         } else {
             $error_msg = $result['error'] ?? 'Unknown error';
-            error_log("NFT minting failed for license {$license_id}: " . $error_msg);
+            $http_code = $result['http_code'] ?? null;
+            $response_body = $result['response'] ?? null;
 
-            // Update queue status to failed
+            error_log("NFT minting failed for license {$license_id}: " . $error_msg);
+            if ($http_code) {
+                error_log("HTTP Code: {$http_code}");
+            }
+            if ($response_body) {
+                error_log("Response: " . json_encode($response_body));
+            }
+
+            // Update queue status to failed with full error details
+            $full_error = $error_msg;
+            if ($response_body && is_array($response_body)) {
+                $full_error .= ' | Response: ' . json_encode($response_body);
+            }
+
             if (function_exists('fml_update_nft_queue_item')) {
-                fml_update_nft_queue_item($license_id, 'failed', $error_msg);
+                fml_update_nft_queue_item($license_id, 'failed', $full_error);
             }
 
             // Update license status to reflect failure
