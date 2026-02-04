@@ -692,20 +692,43 @@ function fml_upload_license_pdf_to_ipfs($pdf_url, $filename = '') {
  * @return array Result with success status and data/error
  */
 function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
+    error_log("=== Starting NFT mint for license #{$license_id} ===");
+
     // Validate license exists
     $license_pod = pods('license', $license_id);
     if (!$license_pod || !$license_pod->exists()) {
+        error_log("NFT mint failed: License #{$license_id} not found");
         return ['success' => false, 'error' => 'License not found'];
     }
+
+    // Validate wallet address
+    if (empty($wallet_address)) {
+        error_log("NFT mint failed: No wallet address provided for license #{$license_id}");
+        return ['success' => false, 'error' => 'No wallet address provided'];
+    }
+
+    error_log("Wallet address: {$wallet_address}");
 
     // Check NMKR credentials
     $creds = fml_get_nmkr_credentials();
     if (!$creds['success']) {
+        error_log("NFT mint failed: " . $creds['error']);
         return ['success' => false, 'error' => $creds['error']];
     }
 
+    error_log("NMKR Mode: " . $creds['mode']);
+    error_log("NMKR API URL: " . $creds['api_url']);
+
     // Get license data
     $license_url = $license_pod->field('license_url');
+
+    // Validate license URL exists and is accessible
+    if (empty($license_url)) {
+        error_log("NFT mint failed: No license_url for license #{$license_id}");
+        return ['success' => false, 'error' => 'License PDF URL not found - license may not have been generated yet'];
+    }
+
+    error_log("License URL: {$license_url}");
     $licensor = $license_pod->field('licensor');
     $project = $license_pod->field('project');
     $datetime = $license_pod->field('datetime');
@@ -824,6 +847,12 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
         ]
     ];
 
+    // Check if license URL is accessible from the internet (not localhost)
+    if (strpos($license_url, 'localhost') !== false || strpos($license_url, '.local') !== false || strpos($license_url, '127.0.0.1') !== false) {
+        error_log("NFT mint warning: License URL appears to be a local URL that NMKR cannot access: {$license_url}");
+        return ['success' => false, 'error' => 'License PDF is on localhost - NMKR cannot access local URLs. License URL: ' . $license_url];
+    }
+
     // Prepare NMKR MintAndSendSpecific request
     $mint_api_url = $creds['api_url'] . '/v2/MintAndSendSpecific/' . $creds['project_uid'];
 
@@ -846,6 +875,13 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
         'receiveraddress' => $wallet_address,
         'count' => 1
     ];
+
+    error_log("=== NMKR Mint Request ===");
+    error_log("API URL: {$mint_api_url}");
+    error_log("Token Name: {$token_name}");
+    error_log("Receiver: {$wallet_address}");
+    error_log("Image URL: {$song_image}");
+    error_log("License PDF URL: {$license_url}");
 
     // Make NMKR API request
     $response = wp_remote_post($mint_api_url, [
@@ -894,11 +930,28 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
         // Update license status to failed
         $license_pod->save(['nft_status' => 'failed']);
 
-        error_log("NMKR License NFT mint failed: HTTP {$http_code} - " . json_encode($body));
+        // Build detailed error message
+        $error_detail = "HTTP {$http_code}";
+        if (is_array($body)) {
+            if (isset($body['message'])) {
+                $error_detail .= ": " . $body['message'];
+            } elseif (isset($body['error'])) {
+                $error_detail .= ": " . $body['error'];
+            } elseif (isset($body['errorMessage'])) {
+                $error_detail .= ": " . $body['errorMessage'];
+            } elseif (isset($body['title'])) {
+                $error_detail .= ": " . $body['title'];
+            }
+        }
+
+        error_log("NMKR License NFT mint failed: {$error_detail}");
+        error_log("NMKR Full Response: " . json_encode($body));
+        error_log("NMKR Request URL: " . $mint_api_url);
+        error_log("NMKR Request Data: " . json_encode($mint_data));
 
         return [
             'success' => false,
-            'error' => 'NFT minting failed',
+            'error' => $error_detail,
             'http_code' => $http_code,
             'response' => $body
         ];
