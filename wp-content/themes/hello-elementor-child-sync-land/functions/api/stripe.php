@@ -356,7 +356,7 @@ function fml_handle_checkout_completed($session) {
                 "Song: {$artist_name} - {$song_name}\n" .
                 "Project: {$project_name}\n\n" .
                 "Download your license: {$license_result['url']}\n\n" .
-                "View all your licenses: " . home_url('/account/my-licenses/') . "\n\n" .
+                "View all your licenses: " . home_url('/account/licenses/') . "\n\n" .
                 "Thank you for using Sync.Land!"
             );
         }
@@ -589,7 +589,7 @@ function fml_create_stripe_checkout(WP_REST_Request $request) {
                 'quantity' => 1
             ]
         ],
-        'success_url' => home_url("/account/my-licenses/?payment=success&song={$song_id}"),
+        'success_url' => home_url("/account/licenses/?payment=success&song={$song_id}"),
         'cancel_url' => home_url("/song/{$song_id}/?payment=cancelled"),
         'metadata' => [
             'type' => 'non_exclusive_license',
@@ -1402,7 +1402,7 @@ function fml_create_cart_stripe_checkout($summary, $licensee_name, $project_name
     $checkout_data = [
         'mode' => 'payment',
         'line_items' => $line_items,
-        'success_url' => home_url("/account/my-licenses/?payment=success&session_id={CHECKOUT_SESSION_ID}"),
+        'success_url' => home_url("/account/licenses/?payment=success&session_id={CHECKOUT_SESSION_ID}"),
         'cancel_url' => home_url("/cart/?payment=cancelled"),
         'metadata' => [
             'type' => 'cart_checkout',
@@ -1631,7 +1631,7 @@ function fml_handle_cart_checkout_completed($session) {
             $email_body .= "NFT Verifications: {$nft_count} (minting in progress)\n";
         }
         $email_body .= "Project: {$project_name}\n\n";
-        $email_body .= "View all your licenses: " . home_url('/account/my-licenses/') . "\n\n";
+        $email_body .= "View all your licenses: " . home_url('/account/licenses/') . "\n\n";
         $email_body .= "Thank you for using Sync.Land!";
 
         wp_mail(
