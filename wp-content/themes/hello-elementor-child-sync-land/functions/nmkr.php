@@ -960,45 +960,35 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
         error_log("Using URL for NMKR upload (Base64 fallback failed): " . $song_image);
     }
 
+    // Get additional license data
+    $licensor_name = fml_get_pod_value($license_pod, 'licensor') ?: $artist_name;
+    $legal_name_value = $legal_name ?: 'Licensee';
+
     $upload_data = [
         'tokenname' => $token_name,
         'displayname' => "Sync License: {$artist_name} - {$song_title}",
         'metadataPlaceholder' => [
-            [
-                'name' => 'name',
-                'value' => "Sync License: {$artist_name} - {$song_title}"
-            ],
-            [
-                'name' => 'License Type',
-                'value' => $license_type_label
-            ],
-            [
-                'name' => 'Song',
-                'value' => $song_title
-            ],
-            [
-                'name' => 'Artist',
-                'value' => $artist_name
-            ],
-            [
-                'name' => 'Licensee',
-                'value' => $legal_name ?: $licensor ?: 'Unknown'
-            ],
-            [
-                'name' => 'Project',
-                'value' => $project ?: 'General Use'
-            ],
-            [
-                'name' => 'Issue Date',
-                'value' => $issue_date
-            ],
-            [
-                'name' => 'Marketplace',
-                'value' => 'Sync.Land'
-            ]
+            // Match the NMKR project template fields exactly
+            ['name' => 'Title', 'value' => $song_title],
+            ['name' => 'Description', 'value' => "Sync license for '{$song_title}' by {$artist_name}"],
+            ['name' => 'License Description', 'value' => $license_type_label],
+            ['name' => 'Licensor', 'value' => $licensor_name],
+            ['name' => 'Licensee', 'value' => $legal_name_value],
+            ['name' => 'Composition/Recording', 'value' => 'Master & Sync'],
+            ['name' => 'Artist', 'value' => $artist_name],
+            ['name' => 'Publisher', 'value' => $artist_name],
+            ['name' => 'Composer', 'value' => $artist_name],
+            ['name' => 'Fee', 'value' => $license_type === 'non_exclusive' ? 'Paid' : 'Free (CC-BY)'],
+            ['name' => 'Territory', 'value' => 'Worldwide'],
+            ['name' => 'Media Types', 'value' => 'All Media'],
+            ['name' => 'Term', 'value' => 'Perpetual'],
+            ['name' => 'Usage Duration', 'value' => 'Unlimited'],
+            ['name' => 'License PDF', 'value' => $license_url ?: 'See attached file']
         ],
         'previewImageNft' => $preview_image_data
     ];
+
+    error_log("Metadata placeholders set for: Title={$song_title}, Artist={$artist_name}, Licensee={$legal_name_value}");
 
     // Add subfile (license PDF) if we have a public URL
     if (!empty($license_url) && strpos($license_url, 'http') === 0) {
