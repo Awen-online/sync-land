@@ -876,37 +876,146 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
         'count' => 1
     ];
 
-    error_log("=== NMKR Mint Request ===");
-    error_log("API URL: {$mint_api_url}");
-    error_log("Token Name: {$token_name}");
-    error_log("Receiver: {$wallet_address}");
-    error_log("Image URL: {$song_image}");
-    error_log("License PDF URL: {$license_url}");
+    // ========================================
+    // STEP 1: Upload NFT to NMKR Project
+    // ========================================
+    $upload_url = $creds['api_url'] . '/v2/UploadNft/' . $creds['project_uid'];
 
-    // Make NMKR API request
-    $response = wp_remote_post($mint_api_url, [
+    $upload_data = [
+        'tokenname' => $token_name,
+        'displayname' => "Sync License: {$artist_name} - {$song_title}",
+        'metadataPlaceholder' => [
+            [
+                'name' => 'name',
+                'value' => "Sync License: {$artist_name} - {$song_title}"
+            ],
+            [
+                'name' => 'License Type',
+                'value' => $license_type_label
+            ],
+            [
+                'name' => 'Song',
+                'value' => $song_title
+            ],
+            [
+                'name' => 'Artist',
+                'value' => $artist_name
+            ],
+            [
+                'name' => 'Licensee',
+                'value' => $legal_name ?: $licensor ?: 'Unknown'
+            ],
+            [
+                'name' => 'Project',
+                'value' => $project ?: 'General Use'
+            ],
+            [
+                'name' => 'Issue Date',
+                'value' => $issue_date
+            ],
+            [
+                'name' => 'Marketplace',
+                'value' => 'Sync.Land'
+            ]
+        ],
+        'previewImageNft' => [
+            'mimetype' => 'image/png',
+            'fileFromUrl' => $song_image
+        ]
+    ];
+
+    // Add subfile (license PDF) if we have a public URL
+    if (!empty($license_url) && strpos($license_url, 'http') === 0) {
+        $upload_data['subfiles'] = [
+            [
+                'subfile' => [
+                    'mimetype' => 'application/pdf',
+                    'fileFromUrl' => $license_url
+                ]
+            ]
+        ];
+    }
+
+    error_log("=== NMKR Upload NFT Request ===");
+    error_log("API URL: {$upload_url}");
+    error_log("Token Name: {$token_name}");
+    error_log("Upload Data: " . json_encode($upload_data));
+
+    // Upload the NFT
+    $upload_response = wp_remote_post($upload_url, [
         'headers' => [
             'Authorization' => 'Bearer ' . $creds['api_key'],
             'Content-Type' => 'application/json'
         ],
-        'body' => json_encode($mint_data),
+        'body' => json_encode($upload_data),
         'timeout' => 120
     ]);
 
-    if (is_wp_error($response)) {
+    if (is_wp_error($upload_response)) {
         $license_pod->save(['nft_status' => 'failed']);
-        return ['success' => false, 'error' => 'Minting request failed: ' . $response->get_error_message()];
+        error_log("NMKR Upload failed: " . $upload_response->get_error_message());
+        return ['success' => false, 'error' => 'NFT upload failed: ' . $upload_response->get_error_message()];
     }
 
-    $http_code = wp_remote_retrieve_response_code($response);
-    $body = json_decode(wp_remote_retrieve_body($response), true);
+    $upload_http_code = wp_remote_retrieve_response_code($upload_response);
+    $upload_body = json_decode(wp_remote_retrieve_body($upload_response), true);
 
-    if ($http_code == 200 || $http_code == 201) {
+    error_log("NMKR Upload Response Code: {$upload_http_code}");
+    error_log("NMKR Upload Response: " . json_encode($upload_body));
+
+    if ($upload_http_code != 200 && $upload_http_code != 201) {
+        $license_pod->save(['nft_status' => 'failed']);
+        $error_msg = "Upload failed HTTP {$upload_http_code}";
+        if (isset($upload_body['message'])) $error_msg .= ": " . $upload_body['message'];
+        elseif (isset($upload_body['errorMessage'])) $error_msg .= ": " . $upload_body['errorMessage'];
+        return ['success' => false, 'error' => $error_msg, 'response' => $upload_body];
+    }
+
+    // Get the NFT UID from upload response
+    $nft_uid = $upload_body['nftUid'] ?? $upload_body['nftId'] ?? null;
+    if (empty($nft_uid)) {
+        $license_pod->save(['nft_status' => 'failed']);
+        error_log("NMKR Upload succeeded but no nftUid in response: " . json_encode($upload_body));
+        return ['success' => false, 'error' => 'Upload succeeded but no NFT UID returned', 'response' => $upload_body];
+    }
+
+    error_log("NFT uploaded successfully. NFT UID: {$nft_uid}");
+
+    // ========================================
+    // STEP 2: Mint and Send the NFT
+    // ========================================
+    $mint_url = $creds['api_url'] . '/v2/MintAndSendSpecific/' . $creds['project_uid'] . '/' . $nft_uid . '/1/' . $wallet_address;
+
+    error_log("=== NMKR Mint Request ===");
+    error_log("Mint URL: {$mint_url}");
+
+    $mint_response = wp_remote_post($mint_url, [
+        'headers' => [
+            'Authorization' => 'Bearer ' . $creds['api_key'],
+            'Content-Type' => 'application/json'
+        ],
+        'body' => '{}',
+        'timeout' => 120
+    ]);
+
+    if (is_wp_error($mint_response)) {
+        $license_pod->save(['nft_status' => 'failed']);
+        error_log("NMKR Mint failed: " . $mint_response->get_error_message());
+        return ['success' => false, 'error' => 'Mint request failed: ' . $mint_response->get_error_message()];
+    }
+
+    $mint_http_code = wp_remote_retrieve_response_code($mint_response);
+    $mint_body = json_decode(wp_remote_retrieve_body($mint_response), true);
+
+    error_log("NMKR Mint Response Code: {$mint_http_code}");
+    error_log("NMKR Mint Response: " . json_encode($mint_body));
+
+    if ($mint_http_code == 200 || $mint_http_code == 201) {
         // Update license pod with NFT data
         $license_pod->save([
             'nft_status' => 'minted',
-            'nft_asset_id' => $body['nftId'] ?? $token_name,
-            'nft_transaction_hash' => $body['transactionId'] ?? '',
+            'nft_asset_id' => $nft_uid,
+            'nft_transaction_hash' => $mint_body['txHash'] ?? $mint_body['transactionId'] ?? '',
             'nft_minted_at' => current_time('mysql'),
             'nft_ipfs_hash' => $ipfs_hash,
             'nft_policy_id' => $creds['policy_id'],
@@ -914,12 +1023,16 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
             'wallet_address' => $wallet_address
         ]);
 
+        error_log("=== NFT Minted Successfully! ===");
+        error_log("NFT UID: {$nft_uid}");
+        error_log("TX Hash: " . ($mint_body['txHash'] ?? $mint_body['transactionId'] ?? 'pending'));
+
         return [
             'success' => true,
             'message' => 'License NFT minted successfully',
             'data' => [
-                'nft_id' => $body['nftId'] ?? $token_name,
-                'transaction_id' => $body['transactionId'] ?? null,
+                'nft_uid' => $nft_uid,
+                'transaction_hash' => $mint_body['txHash'] ?? $mint_body['transactionId'] ?? null,
                 'token_name' => $token_name,
                 'license_id' => $license_id,
                 'ipfs_hash' => $ipfs_hash,
@@ -931,29 +1044,24 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
         $license_pod->save(['nft_status' => 'failed']);
 
         // Build detailed error message
-        $error_detail = "HTTP {$http_code}";
-        if (is_array($body)) {
-            if (isset($body['message'])) {
-                $error_detail .= ": " . $body['message'];
-            } elseif (isset($body['error'])) {
-                $error_detail .= ": " . $body['error'];
-            } elseif (isset($body['errorMessage'])) {
-                $error_detail .= ": " . $body['errorMessage'];
-            } elseif (isset($body['title'])) {
-                $error_detail .= ": " . $body['title'];
+        $error_detail = "Mint failed HTTP {$mint_http_code}";
+        if (is_array($mint_body)) {
+            if (isset($mint_body['message'])) {
+                $error_detail .= ": " . $mint_body['message'];
+            } elseif (isset($mint_body['errorMessage'])) {
+                $error_detail .= ": " . $mint_body['errorMessage'];
+            } elseif (isset($mint_body['error'])) {
+                $error_detail .= ": " . $mint_body['error'];
             }
         }
 
-        error_log("NMKR License NFT mint failed: {$error_detail}");
-        error_log("NMKR Full Response: " . json_encode($body));
-        error_log("NMKR Request URL: " . $mint_api_url);
-        error_log("NMKR Request Data: " . json_encode($mint_data));
+        error_log("NMKR Mint failed: {$error_detail}");
 
         return [
             'success' => false,
             'error' => $error_detail,
-            'http_code' => $http_code,
-            'response' => $body
+            'http_code' => $mint_http_code,
+            'response' => $mint_body
         ];
     }
 }
