@@ -982,14 +982,30 @@ function fml_get_recent_licenses_with_nft_status($limit = 25) {
             $song_title = get_the_title($song_id);
         }
 
+        // Handle Pods fields that may return arrays
+        $raw_nft_status = $license_pod->field('nft_status');
+        $nft_status = is_array($raw_nft_status) ? ($raw_nft_status[0] ?? 'none') : ($raw_nft_status ?: 'none');
+
+        $raw_license_type = $license_pod->field('license_type');
+        $license_type = is_array($raw_license_type) ? ($raw_license_type[0] ?? 'cc_by') : ($raw_license_type ?: 'cc_by');
+
+        $raw_tx_hash = $license_pod->field('nft_transaction_hash');
+        $tx_hash = is_array($raw_tx_hash) ? ($raw_tx_hash[0] ?? '') : ($raw_tx_hash ?: '');
+
+        $raw_datetime = $license_pod->field('datetime');
+        $datetime = is_array($raw_datetime) ? ($raw_datetime[0] ?? '') : ($raw_datetime ?: '');
+
+        $raw_wallet = $license_pod->field('wallet_address');
+        $wallet = is_array($raw_wallet) ? ($raw_wallet[0] ?? '') : ($raw_wallet ?: '');
+
         $licenses[] = [
             'id' => $post->ID,
             'song_title' => $song_title,
-            'license_type' => $license_pod->field('license_type') ?: 'cc_by',
-            'nft_status' => $license_pod->field('nft_status') ?: 'none',
-            'nft_transaction_hash' => $license_pod->field('nft_transaction_hash'),
-            'datetime' => $license_pod->field('datetime'),
-            'wallet_address' => $license_pod->field('wallet_address')
+            'license_type' => $license_type,
+            'nft_status' => $nft_status,
+            'nft_transaction_hash' => $tx_hash,
+            'datetime' => $datetime,
+            'wallet_address' => $wallet
         ];
     }
 

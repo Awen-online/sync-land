@@ -269,9 +269,32 @@ function render() {
 }
 
 // Expose toggle for the music player
+// This controls the Three.js background particles, NOT the inner player visualizer
 window.toggleBackgroundAudioVisualizer = function(enabled) {
     audioVisualizerEnabled = enabled;
-    console.log('Background particles audio visualizer:', enabled ? 'ON' : 'OFF');
+    console.log('[Three.js Background] Audio visualizer:', enabled ? 'ON' : 'OFF');
+
+    // If turning off, smoothly reset particles to base state
+    if (!enabled && outerParticles) {
+        var sizes = outerParticles.geometry.attributes.size.array;
+        var positions = outerParticles.geometry.attributes.position.array;
+        for (var i = 0; i < sizes.length; i++) {
+            sizes[i] = baseSizes[i];
+        }
+        for (var i = 0; i < basePositions.length; i++) {
+            positions[i] = basePositions[i];
+        }
+        outerParticles.geometry.attributes.size.needsUpdate = true;
+        outerParticles.geometry.attributes.position.needsUpdate = true;
+        // Reset camera position
+        camera.position.x = 0;
+        camera.position.y = 0;
+    }
+};
+
+// Check if visualizer was already toggled before this script loaded
+window.getBackgroundVisualizerState = function() {
+    return audioVisualizerEnabled;
 };
 
 document.addEventListener('DOMContentLoaded', init);

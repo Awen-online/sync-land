@@ -670,21 +670,42 @@
 
 .fml-wallet-input-add {
     margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid rgba(99, 179, 237, 0.2);
 }
 
 .fml-wallet-input-add.hidden {
     display: none;
 }
 
+.fml-wallet-label {
+    display: block;
+    font-size: 0.9rem;
+    font-weight: 500;
+    margin-bottom: 10px;
+    color: var(--fml-text);
+}
+
+.fml-wallet-label .required {
+    color: var(--fml-error);
+}
+
+.fml-wallet-input-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+}
+
 .fml-wallet-input-field {
     width: 100%;
-    padding: 12px 14px;
-    border: 1px solid var(--fml-border);
+    padding: 12px 45px 12px 14px;
+    border: 2px solid var(--fml-border);
     border-radius: 6px;
     background: var(--fml-bg-input);
     color: var(--fml-text);
     font-family: 'Courier New', monospace;
     font-size: 0.85rem;
+    transition: all 0.3s ease;
 }
 
 .fml-wallet-input-field::placeholder {
@@ -696,6 +717,73 @@
     outline: none;
     border-color: var(--fml-primary);
     box-shadow: 0 0 0 3px var(--fml-primary-glow);
+}
+
+/* Wallet Validation States */
+.fml-wallet-input-field.valid {
+    border-color: var(--fml-success);
+    box-shadow: 0 0 0 3px rgba(72, 187, 120, 0.2);
+}
+
+.fml-wallet-input-field.invalid {
+    border-color: var(--fml-error);
+    box-shadow: 0 0 0 3px rgba(252, 129, 129, 0.2);
+}
+
+.fml-wallet-input-field.warning {
+    border-color: var(--fml-warning);
+    box-shadow: 0 0 0 3px rgba(246, 224, 94, 0.2);
+}
+
+/* Validation Icon */
+.fml-wallet-validation-icon {
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 1.1rem;
+    pointer-events: none;
+}
+
+.fml-wallet-validation-icon.valid {
+    color: var(--fml-success);
+}
+
+.fml-wallet-validation-icon.invalid {
+    color: var(--fml-error);
+}
+
+.fml-wallet-validation-icon.warning {
+    color: var(--fml-warning);
+}
+
+/* Validation Message */
+.fml-wallet-validation-msg {
+    display: block;
+    font-size: 0.8rem;
+    margin-top: 6px;
+    min-height: 1.2em;
+}
+
+.fml-wallet-validation-msg.success {
+    color: var(--fml-success);
+}
+
+.fml-wallet-validation-msg.error {
+    color: var(--fml-error);
+}
+
+.fml-wallet-validation-msg.warning {
+    color: var(--fml-warning);
+}
+
+/* Wallet Hint */
+.fml-wallet-hint {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--fml-text-muted);
+    margin-top: 8px;
+    opacity: 0.8;
 }
 
 /* ============================================================================

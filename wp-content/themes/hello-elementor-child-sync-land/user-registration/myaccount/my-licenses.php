@@ -47,7 +47,7 @@ while ($licenses->fetch()) {
     }
     if ($license_data['nft_status'] === 'minted') {
         $nft_verified_count++;
-    } elseif ($license_data['nft_status'] === 'pending' || $license_data['nft_status'] === 'processing') {
+    } elseif (in_array($license_data['nft_status'], ['pending', 'processing', 'ipfs_pending'])) {
         $nft_pending_count++;
     }
 
@@ -461,9 +461,12 @@ while ($licenses->fetch()) {
         <i class="fas fa-check-circle"></i>
         <div class="banner-content">
             <h3>Payment Successful!</h3>
-            <p>Your license<?php echo $total_licenses > 1 ? 's have' : ' has'; ?> been generated. You can download your license PDF and song files below.</p>
+            <p>Your license<?php echo $total_licenses > 1 ? 's have' : ' has'; ?> been generated. <strong>Download your license PDF and song files now</strong> using the buttons below.</p>
             <?php if ($nft_pending_count > 0): ?>
-            <p style="margin-top: 8px; font-size: 0.9rem;"><i class="fas fa-spinner fa-spin"></i> NFT verification is being processed on the blockchain. This page will refresh automatically.</p>
+            <p style="margin-top: 8px; font-size: 0.9rem; opacity: 0.95;">
+                <i class="fas fa-cube"></i> NFT verification is being processed on the blockchain.
+                <span style="display: block; margin-top: 4px; font-size: 0.85rem;">Your downloads are ready now - NFT status will update automatically.</span>
+            </p>
             <?php endif; ?>
         </div>
     </div>
@@ -567,8 +570,10 @@ while ($licenses->fetch()) {
                 $nft_badge = '<span class="fml-nft-badge processing"><i class="fas fa-spinner fa-spin"></i> Minting...</span>';
             } elseif ($nft_status === 'pending') {
                 $nft_badge = '<span class="fml-nft-badge pending"><i class="fas fa-hourglass-half"></i> Queued</span>';
+            } elseif ($nft_status === 'ipfs_pending') {
+                $nft_badge = '<span class="fml-nft-badge pending" title="NFT submitted, waiting for IPFS confirmation"><i class="fas fa-cloud-upload-alt"></i> Processing</span>';
             } elseif ($nft_status === 'failed') {
-                $nft_badge = '<span class="fml-nft-badge failed"><i class="fas fa-exclamation-triangle"></i> Failed</span>';
+                $nft_badge = '<span class="fml-nft-badge failed" title="NFT minting failed - contact support for retry"><i class="fas fa-exclamation-triangle"></i> Failed</span>';
             } else {
                 $nft_badge = '<span class="fml-nft-badge none">-</span>';
             }
