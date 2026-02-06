@@ -127,12 +127,44 @@
             // Get license options
             const licenseType = $wrapper.find('input[name="fml_license_type_' + songId + '"]:checked').val() || 'cc_by';
             const includeNft = $wrapper.find('.fml-nft-add-checkbox').is(':checked');
-            const walletAddress = $wrapper.find('.fml-wallet-input-field').val() || '';
+            const $walletInput = $wrapper.find('.fml-wallet-input-field');
+            const walletAddress = $walletInput.val() ? $walletInput.val().trim() : '';
+            const nmkrMode = $walletInput.data('nmkr-mode') || 'preprod';
 
             // Validate wallet if NFT selected
-            if (includeNft && walletAddress && !validateCardanoAddress(walletAddress)) {
-                alert('Please enter a valid Cardano wallet address for NFT delivery.');
-                return;
+            if (includeNft) {
+                // Wallet is required when NFT is selected
+                if (!walletAddress) {
+                    showNotification('Please enter your Cardano wallet address for NFT delivery.', 'error');
+                    $walletInput.focus();
+                    return;
+                }
+
+                // Validate address format based on mode
+                const isMainnet = /^addr1[a-z0-9]{50,150}$/i.test(walletAddress);
+                const isTestnet = /^addr_test1[a-z0-9]{50,150}$/i.test(walletAddress);
+
+                if (nmkrMode === 'preprod') {
+                    if (!isTestnet) {
+                        if (isMainnet) {
+                            showNotification('We\'re in testnet mode. Please use a preprod wallet address (addr_test1...)', 'error');
+                        } else {
+                            showNotification('Invalid wallet address. Preprod addresses start with addr_test1...', 'error');
+                        }
+                        $walletInput.focus();
+                        return;
+                    }
+                } else {
+                    if (!isMainnet) {
+                        if (isTestnet) {
+                            showNotification('Please use a mainnet wallet address (addr1...) not a testnet address.', 'error');
+                        } else {
+                            showNotification('Invalid wallet address. Cardano addresses start with addr1...', 'error');
+                        }
+                        $walletInput.focus();
+                        return;
+                    }
+                }
             }
 
             addToCart(songId, licenseType, includeNft, walletAddress, $btn);
@@ -144,10 +176,107 @@
 
             if ($(this).is(':checked')) {
                 $walletInput.removeClass('hidden');
+                // Focus the wallet input
+                $walletInput.find('.fml-wallet-input-field').focus();
             } else {
                 $walletInput.addClass('hidden');
+                // Clear validation state when hiding
+                clearWalletValidation($walletInput.find('.fml-wallet-input-field'));
             }
         });
+
+        // Real-time wallet validation on song page add-to-cart form
+        let walletAddTimeout;
+        $(document).on('input', '.fml-wallet-input-field', function() {
+            const $input = $(this);
+            const walletAddress = $input.val().trim();
+            const nmkrMode = $input.data('nmkr-mode') || 'preprod';
+
+            clearTimeout(walletAddTimeout);
+            walletAddTimeout = setTimeout(function() {
+                validateWalletInput($input, walletAddress, nmkrMode);
+            }, 400);
+        });
+
+        // Also validate on blur (when user leaves the field)
+        $(document).on('blur', '.fml-wallet-input-field', function() {
+            const $input = $(this);
+            const walletAddress = $input.val().trim();
+            const nmkrMode = $input.data('nmkr-mode') || 'preprod';
+
+            if (walletAddress.length > 0) {
+                validateWalletInput($input, walletAddress, nmkrMode);
+            }
+        });
+    }
+
+    /**
+     * Validate wallet input field and show visual feedback
+     */
+    function validateWalletInput($input, walletAddress, nmkrMode) {
+        const $wrapper = $input.closest('.fml-wallet-input-add');
+        const $icon = $wrapper.find('.fml-wallet-validation-icon');
+        const $msg = $wrapper.find('.fml-wallet-validation-msg');
+
+        // Clear previous state
+        $input.removeClass('valid invalid warning');
+        $icon.removeClass('valid invalid warning').html('');
+        $msg.removeClass('success error warning').text('');
+
+        if (!walletAddress) {
+            return;
+        }
+
+        // Check address format
+        const isMainnet = /^addr1[a-z0-9]{50,150}$/i.test(walletAddress);
+        const isTestnet = /^addr_test1[a-z0-9]{50,150}$/i.test(walletAddress);
+
+        if (nmkrMode === 'preprod') {
+            // In preprod mode, expect testnet addresses
+            if (isTestnet) {
+                $input.addClass('valid');
+                $icon.addClass('valid').html('<i class="fas fa-check-circle"></i>');
+                $msg.addClass('success').text('Valid preprod address');
+            } else if (isMainnet) {
+                // Mainnet address in preprod mode - warn user
+                $input.addClass('warning');
+                $icon.addClass('warning').html('<i class="fas fa-exclamation-triangle"></i>');
+                $msg.addClass('warning').text('This is a mainnet address. We\'re in testnet mode - use addr_test1...');
+            } else {
+                $input.addClass('invalid');
+                $icon.addClass('invalid').html('<i class="fas fa-times-circle"></i>');
+                $msg.addClass('error').text('Invalid address. Preprod addresses start with addr_test1...');
+            }
+        } else {
+            // In mainnet mode, expect mainnet addresses
+            if (isMainnet) {
+                $input.addClass('valid');
+                $icon.addClass('valid').html('<i class="fas fa-check-circle"></i>');
+                $msg.addClass('success').text('Valid Cardano address');
+            } else if (isTestnet) {
+                // Testnet address in mainnet mode - warn user
+                $input.addClass('warning');
+                $icon.addClass('warning').html('<i class="fas fa-exclamation-triangle"></i>');
+                $msg.addClass('warning').text('This is a testnet address. Use a mainnet address (addr1...)');
+            } else {
+                $input.addClass('invalid');
+                $icon.addClass('invalid').html('<i class="fas fa-times-circle"></i>');
+                $msg.addClass('error').text('Invalid address. Cardano addresses start with addr1...');
+            }
+        }
+    }
+
+    /**
+     * Clear wallet validation state
+     */
+    function clearWalletValidation($input) {
+        const $wrapper = $input.closest('.fml-wallet-input-add');
+        const $icon = $wrapper.find('.fml-wallet-validation-icon');
+        const $msg = $wrapper.find('.fml-wallet-validation-msg');
+
+        $input.removeClass('valid invalid warning').val('');
+        $icon.removeClass('valid invalid warning').html('');
+        $msg.removeClass('success error warning').text('');
     }
 
     /**

@@ -872,6 +872,11 @@ function fml_licensing_settings_page() {
             update_option('fml_nmkr_mainnet_policy_id', sanitize_text_field($_POST['fml_nmkr_mainnet_policy_id']));
         }
 
+        // Save IPFS settings (Pinata)
+        if (isset($_POST['fml_pinata_jwt'])) {
+            update_option('fml_pinata_jwt', sanitize_text_field($_POST['fml_pinata_jwt']));
+        }
+
         echo '<div class="notice notice-success"><p>Settings saved.</p></div>';
     }
 
@@ -895,6 +900,9 @@ function fml_licensing_settings_page() {
     $nmkr_mainnet_api_key = get_option('fml_nmkr_mainnet_api_key', '');
     $nmkr_mainnet_project_uid = get_option('fml_nmkr_mainnet_project_uid', '');
     $nmkr_mainnet_policy_id = get_option('fml_nmkr_mainnet_policy_id', '');
+
+    // Get IPFS settings
+    $pinata_jwt = get_option('fml_pinata_jwt', '');
 
     ?>
     <div class="wrap">
@@ -1182,6 +1190,35 @@ function fml_licensing_settings_page() {
                             Verify NMKR Connection
                         </button>
                         <span id="fml-nmkr-current-status" style="margin-left: 10px;"></span>
+                    </td>
+                </tr>
+            </table>
+
+            <hr style="margin: 30px 0;">
+
+            <!-- IPFS Configuration (Pinata) -->
+            <h2>IPFS Configuration</h2>
+            <p class="description">IPFS is used to store license PDFs on decentralized storage for NFT metadata. <a href="https://pinata.cloud" target="_blank">Get a free Pinata account</a> to enable this.</p>
+
+            <table class="form-table">
+                <tr>
+                    <th scope="row">
+                        <label for="fml_pinata_jwt">Pinata JWT Token</label>
+                    </th>
+                    <td>
+                        <input type="password" name="fml_pinata_jwt" id="fml_pinata_jwt"
+                               class="regular-text" placeholder="Your Pinata JWT token"
+                               value="<?php echo esc_attr($pinata_jwt); ?>" autocomplete="off">
+                        <button type="button" class="button fml-toggle-visibility" data-target="fml_pinata_jwt">Show</button>
+                        <?php if (!empty($pinata_jwt)): ?>
+                            <p class="description" style="color: green;">&#10003; JWT Token saved - IPFS uploads enabled</p>
+                        <?php else: ?>
+                            <p class="description" style="color: #f0ad4e;">&#9888; No JWT token - IPFS uploads disabled</p>
+                        <?php endif; ?>
+                        <p class="description">
+                            To get your JWT: Login to <a href="https://app.pinata.cloud/developers/api-keys" target="_blank">Pinata</a> →
+                            API Keys → New Key → Enable "pinFileToIPFS" → Copy the JWT
+                        </p>
                     </td>
                 </tr>
             </table>

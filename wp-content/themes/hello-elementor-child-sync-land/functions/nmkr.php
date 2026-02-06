@@ -604,7 +604,12 @@ function fml_get_license_nft_status(WP_REST_Request $request) {
  */
 
 /**
- * Upload a license PDF to IPFS via NMKR
+ * Upload a license PDF to IPFS
+ *
+ * Tries multiple IPFS services:
+ * 1. Pinata (free tier available)
+ * 2. Web3.Storage (if configured)
+ * 3. NFT.Storage (if configured)
  *
  * @param string $pdf_url The URL of the license PDF to upload
  * @param string $filename The filename to use on IPFS
@@ -614,13 +619,7 @@ function fml_upload_license_pdf_to_ipfs($pdf_url, $filename = '') {
     error_log("=== IPFS Upload Starting ===");
     error_log("PDF URL: {$pdf_url}");
 
-    $creds = fml_get_nmkr_credentials();
-    if (!$creds['success']) {
-        error_log("IPFS Upload failed: No NMKR credentials");
-        return ['success' => false, 'error' => $creds['error']];
-    }
-
-    // Download PDF content
+    // Download PDF content first
     error_log("Downloading PDF from S3...");
     $pdf_response = wp_remote_get($pdf_url, ['timeout' => 30, 'sslverify' => false]);
     if (is_wp_error($pdf_response)) {
@@ -642,79 +641,145 @@ function fml_upload_license_pdf_to_ipfs($pdf_url, $filename = '') {
         return ['success' => false, 'error' => 'PDF content is empty'];
     }
 
-    error_log("PDF downloaded successfully. Size: " . strlen($pdf_content) . " bytes");
+    $pdf_size = strlen($pdf_content);
+    error_log("PDF downloaded successfully. Size: {$pdf_size} bytes");
 
-    // Convert to base64
-    $pdf_base64 = base64_encode($pdf_content);
-    error_log("PDF encoded to base64. Length: " . strlen($pdf_base64));
+    // Check if PDF is too large
+    $max_size = 10 * 1024 * 1024; // 10MB limit
+    if ($pdf_size > $max_size) {
+        error_log("IPFS Upload failed: PDF too large ({$pdf_size} bytes > {$max_size})");
+        return ['success' => false, 'error' => 'PDF file too large for IPFS upload'];
+    }
 
     // Generate filename if not provided
     if (empty($filename)) {
         $filename = 'license_' . time() . '.pdf';
     }
 
-    // Upload to IPFS via NMKR API (no project UID needed - just uses API key auth)
-    $api_url = $creds['api_url'] . '/v2/UploadToIPFS';
-    error_log("Uploading to NMKR IPFS: {$api_url}");
+    // Try Pinata first (most reliable free option)
+    $pinata_jwt = get_option('fml_pinata_jwt', '');
+    if (!empty($pinata_jwt)) {
+        $result = fml_upload_to_pinata($pdf_content, $filename, $pinata_jwt);
+        if ($result['success']) {
+            return $result;
+        }
+        error_log("Pinata upload failed: " . ($result['error'] ?? 'Unknown error'));
+    } else {
+        error_log("Pinata JWT not configured, skipping Pinata");
+    }
 
-    // NMKR API field names (try lowercase as per their API spec)
-    $data = [
-        'fileFromBase64' => $pdf_base64,
-        'mimetype' => 'application/pdf'
+    // Try NFT.Storage as fallback
+    $nft_storage_key = get_option('fml_nft_storage_key', '');
+    if (!empty($nft_storage_key)) {
+        $result = fml_upload_to_nft_storage($pdf_content, $filename, $nft_storage_key);
+        if ($result['success']) {
+            return $result;
+        }
+        error_log("NFT.Storage upload failed: " . ($result['error'] ?? 'Unknown error'));
+    }
+
+    // No IPFS service configured or all failed
+    error_log("=== IPFS Upload FAILED - no working IPFS service ===");
+    return [
+        'success' => false,
+        'error' => 'No IPFS service configured. Add Pinata JWT in Settings > Sync.Land Licensing.',
+        'suggestion' => 'Get a free Pinata account at https://pinata.cloud'
     ];
+}
 
-    error_log("IPFS upload request (excluding base64): mimetype=application/pdf, base64_length=" . strlen($pdf_base64));
+/**
+ * Upload to Pinata IPFS
+ */
+function fml_upload_to_pinata($file_content, $filename, $jwt) {
+    error_log("Uploading to Pinata...");
 
-    $response = wp_remote_post($api_url, [
+    $boundary = wp_generate_password(24, false);
+
+    // Build multipart body
+    $body = '';
+    $body .= "--{$boundary}\r\n";
+    $body .= "Content-Disposition: form-data; name=\"file\"; filename=\"{$filename}\"\r\n";
+    $body .= "Content-Type: application/pdf\r\n\r\n";
+    $body .= $file_content . "\r\n";
+    $body .= "--{$boundary}--\r\n";
+
+    $response = wp_remote_post('https://api.pinata.cloud/pinning/pinFileToIPFS', [
         'headers' => [
-            'Authorization' => 'Bearer ' . $creds['api_key'],
-            'Content-Type' => 'application/json'
+            'Authorization' => 'Bearer ' . $jwt,
+            'Content-Type' => 'multipart/form-data; boundary=' . $boundary
         ],
-        'body' => json_encode($data),
-        'timeout' => 60
+        'body' => $body,
+        'timeout' => 120
     ]);
 
     if (is_wp_error($response)) {
-        error_log("IPFS Upload failed: " . $response->get_error_message());
-        return ['success' => false, 'error' => 'IPFS upload failed: ' . $response->get_error_message()];
+        return ['success' => false, 'error' => $response->get_error_message()];
     }
 
     $http_code = wp_remote_retrieve_response_code($response);
-    $raw_body = wp_remote_retrieve_body($response);
-    $body = json_decode($raw_body, true);
+    $body = json_decode(wp_remote_retrieve_body($response), true);
 
-    error_log("NMKR IPFS response: HTTP {$http_code}");
-    error_log("NMKR IPFS body: " . substr($raw_body, 0, 500));
+    error_log("Pinata response: HTTP {$http_code}");
+    error_log("Pinata body: " . json_encode($body));
 
-    if ($http_code == 200 || $http_code == 201) {
-        $ipfs_hash = $body['ipfsHash'] ?? $body['ipfs_hash'] ?? $body['IpfsHash'] ?? null;
-
-        if (empty($ipfs_hash)) {
-            error_log("IPFS Upload: Success response but no hash found in: " . $raw_body);
-            return ['success' => false, 'error' => 'No IPFS hash in response', 'response' => $body];
-        }
-
-        $ipfs_url = 'ipfs://' . $ipfs_hash;
-        error_log("=== IPFS Upload SUCCESS: {$ipfs_url} ===");
-
+    if ($http_code == 200 && !empty($body['IpfsHash'])) {
+        $ipfs_hash = $body['IpfsHash'];
+        error_log("=== Pinata IPFS Upload SUCCESS: ipfs://{$ipfs_hash} ===");
         return [
             'success' => true,
             'ipfs_hash' => $ipfs_hash,
-            'ipfs_url' => $ipfs_url,
-            'gateway_url' => 'https://ipfs.io/ipfs/' . $ipfs_hash
-        ];
-    } else {
-        $error_msg = $body['message'] ?? $body['error'] ?? $body['errorMessage'] ?? $body['title'] ?? "HTTP {$http_code}";
-        error_log("IPFS Upload failed: {$error_msg}");
-        error_log("Full NMKR response: " . $raw_body);
-        return [
-            'success' => false,
-            'error' => "IPFS upload failed: {$error_msg}",
-            'http_code' => $http_code,
-            'response' => $body,
-            'raw_response' => substr($raw_body, 0, 500)
+            'ipfs_url' => 'ipfs://' . $ipfs_hash,
+            'gateway_url' => 'https://gateway.pinata.cloud/ipfs/' . $ipfs_hash
         ];
     }
+
+    return [
+        'success' => false,
+        'error' => $body['error']['message'] ?? $body['message'] ?? "HTTP {$http_code}",
+        'response' => $body
+    ];
+}
+
+/**
+ * Upload to NFT.Storage
+ */
+function fml_upload_to_nft_storage($file_content, $filename, $api_key) {
+    error_log("Uploading to NFT.Storage...");
+
+    $response = wp_remote_post('https://api.nft.storage/upload', [
+        'headers' => [
+            'Authorization' => 'Bearer ' . $api_key,
+            'Content-Type' => 'application/pdf'
+        ],
+        'body' => $file_content,
+        'timeout' => 120
+    ]);
+
+    if (is_wp_error($response)) {
+        return ['success' => false, 'error' => $response->get_error_message()];
+    }
+
+    $http_code = wp_remote_retrieve_response_code($response);
+    $body = json_decode(wp_remote_retrieve_body($response), true);
+
+    error_log("NFT.Storage response: HTTP {$http_code}");
+
+    if ($http_code == 200 && !empty($body['value']['cid'])) {
+        $ipfs_hash = $body['value']['cid'];
+        error_log("=== NFT.Storage IPFS Upload SUCCESS: ipfs://{$ipfs_hash} ===");
+        return [
+            'success' => true,
+            'ipfs_hash' => $ipfs_hash,
+            'ipfs_url' => 'ipfs://' . $ipfs_hash,
+            'gateway_url' => 'https://nftstorage.link/ipfs/' . $ipfs_hash
+        ];
+    }
+
+    return [
+        'success' => false,
+        'error' => $body['error']['message'] ?? "HTTP {$http_code}",
+        'response' => $body
+    ];
 }
 
 
@@ -1101,8 +1166,13 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
 
     if (is_wp_error($upload_response)) {
         $license_pod->save(['nft_status' => 'failed']);
+        $error_msg = 'NFT upload failed: ' . $upload_response->get_error_message();
         error_log("NMKR Upload failed: " . $upload_response->get_error_message());
-        return ['success' => false, 'error' => 'NFT upload failed: ' . $upload_response->get_error_message()];
+        // Update queue to failed
+        if (function_exists('fml_update_nft_queue_item')) {
+            fml_update_nft_queue_item($license_id, 'failed', $error_msg);
+        }
+        return ['success' => false, 'error' => $error_msg];
     }
 
     $upload_http_code = wp_remote_retrieve_response_code($upload_response);
@@ -1116,6 +1186,11 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
         $error_msg = "Upload failed HTTP {$upload_http_code}";
         if (isset($upload_body['message'])) $error_msg .= ": " . $upload_body['message'];
         elseif (isset($upload_body['errorMessage'])) $error_msg .= ": " . $upload_body['errorMessage'];
+
+        // Update queue to failed
+        if (function_exists('fml_update_nft_queue_item')) {
+            fml_update_nft_queue_item($license_id, 'failed', $error_msg);
+        }
         return ['success' => false, 'error' => $error_msg, 'response' => $upload_body];
     }
 
@@ -1124,6 +1199,10 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
     if (empty($nft_uid)) {
         $license_pod->save(['nft_status' => 'failed']);
         error_log("NMKR Upload succeeded but no nftUid in response: " . json_encode($upload_body));
+        // Update queue to failed
+        if (function_exists('fml_update_nft_queue_item')) {
+            fml_update_nft_queue_item($license_id, 'failed', 'Upload succeeded but no NFT UID returned');
+        }
         return ['success' => false, 'error' => 'Upload succeeded but no NFT UID returned', 'response' => $upload_body];
     }
 
@@ -1193,8 +1272,13 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
 
     if (is_wp_error($mint_response)) {
         $license_pod->save(['nft_status' => 'failed']);
+        $error_msg = 'Mint request failed: ' . $mint_response->get_error_message();
         error_log("NMKR Mint failed: " . $mint_response->get_error_message());
-        return ['success' => false, 'error' => 'Mint request failed: ' . $mint_response->get_error_message()];
+        // Update queue to failed
+        if (function_exists('fml_update_nft_queue_item')) {
+            fml_update_nft_queue_item($license_id, 'failed', $error_msg);
+        }
+        return ['success' => false, 'error' => $error_msg];
     }
 
     $mint_http_code = wp_remote_retrieve_response_code($mint_response);
@@ -1204,7 +1288,52 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
     error_log("NMKR Mint Response: " . json_encode($mint_body));
 
     if ($mint_http_code == 200 || $mint_http_code == 201) {
-        // Update license pod with NFT data
+        // Check if IPFS upload failed
+        $ipfs_failed = empty($ipfs_hash);
+
+        if ($ipfs_failed) {
+            // IPFS upload failed - mark as 'ipfs_pending' so user can still access license
+            // but knows NFT needs retry. Don't mark as fully 'failed'.
+            error_log("=== NFT Mint submitted but IPFS upload failed - marking as ipfs_pending ===");
+            error_log("License is still usable. NFT minting can be retried.");
+
+            $license_pod->save([
+                'nft_status' => 'ipfs_pending',  // New status: license works, NFT needs IPFS retry
+                'nft_asset_id' => $nft_uid,
+                'nft_transaction_hash' => $mint_body['txHash'] ?? $mint_body['transactionId'] ?? '',
+                'nft_policy_id' => $creds['policy_id'],
+                'nft_asset_name' => $token_name,
+                'wallet_address' => $wallet_address
+            ]);
+
+            // Update queue to ipfs_pending (not failed - allows retry)
+            if (function_exists('fml_update_nft_queue_item')) {
+                fml_update_nft_queue_item($license_id, 'ipfs_pending', 'IPFS upload failed - will retry');
+            }
+
+            // Log to monitoring
+            if (function_exists('fml_log_event')) {
+                fml_log_event('nft', "License #{$license_id} - NFT submitted, IPFS pending retry", [
+                    'nft_uid' => $nft_uid,
+                    'tx_hash' => $mint_body['txHash'] ?? $mint_body['transactionId'] ?? 'pending',
+                    'reason' => 'IPFS upload failed, will retry'
+                ], 'warning');
+            }
+
+            // Return partial success - license is usable, NFT is pending
+            return [
+                'success' => true,
+                'partial' => true,
+                'message' => 'License created successfully. NFT minting in progress - IPFS upload will retry automatically.',
+                'data' => [
+                    'nft_uid' => $nft_uid,
+                    'license_id' => $license_id,
+                    'nft_status' => 'ipfs_pending'
+                ]
+            ];
+        }
+
+        // IPFS succeeded - mark as properly minted
         $license_pod->save([
             'nft_status' => 'minted',
             'nft_asset_id' => $nft_uid,
@@ -1216,9 +1345,24 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
             'wallet_address' => $wallet_address
         ]);
 
+        // Update queue to completed
+        if (function_exists('fml_update_nft_queue_item')) {
+            fml_update_nft_queue_item($license_id, 'completed');
+        }
+
         error_log("=== NFT Minted Successfully! ===");
         error_log("NFT UID: {$nft_uid}");
         error_log("TX Hash: " . ($mint_body['txHash'] ?? $mint_body['transactionId'] ?? 'pending'));
+        error_log("IPFS Hash: {$ipfs_hash}");
+
+        // Log success to monitoring
+        if (function_exists('fml_log_event')) {
+            fml_log_event('nft', "License #{$license_id} NFT minted successfully", [
+                'nft_uid' => $nft_uid,
+                'tx_hash' => $mint_body['txHash'] ?? $mint_body['transactionId'] ?? 'pending',
+                'ipfs_hash' => $ipfs_hash
+            ], 'success');
+        }
 
         return [
             'success' => true,
@@ -1249,6 +1393,19 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
         }
 
         error_log("NMKR Mint failed: {$error_detail}");
+
+        // Update queue to failed
+        if (function_exists('fml_update_nft_queue_item')) {
+            fml_update_nft_queue_item($license_id, 'failed', $error_detail);
+        }
+
+        // Log to monitoring
+        if (function_exists('fml_log_event')) {
+            fml_log_event('nft', "License #{$license_id} mint failed", [
+                'error' => $error_detail,
+                'http_code' => $mint_http_code
+            ], 'error');
+        }
 
         return [
             'success' => false,
@@ -1383,14 +1540,28 @@ function fml_retry_failed_nft_minting($license_id, $force = false) {
     }
 
     $nft_status = $license_pod->field('nft_status');
+    // Handle array nft_status
+    if (is_array($nft_status)) {
+        $nft_status = $nft_status[0] ?? '';
+    }
     error_log("Retry NFT minting for license #{$license_id} - Current status: '{$nft_status}'");
 
-    // Allow retry if status is failed, pending, empty, or force is true
+    // Allow retry if status is failed, pending, ipfs_pending, empty, or force is true
     if (!$force && $nft_status === 'minted') {
         return ['success' => false, 'error' => 'License NFT already minted'];
     }
 
+    // Allowed retry statuses
+    $retryable_statuses = ['failed', 'pending', 'ipfs_pending', 'processing', ''];
+    if (!$force && !in_array($nft_status, $retryable_statuses)) {
+        return ['success' => false, 'error' => "Cannot retry NFT with status: {$nft_status}"];
+    }
+
     $wallet_address = $license_pod->field('wallet_address');
+    // Handle array wallet_address
+    if (is_array($wallet_address)) {
+        $wallet_address = $wallet_address[0] ?? '';
+    }
     if (empty($wallet_address)) {
         return ['success' => false, 'error' => "No wallet address on record. Current nft_status: '{$nft_status}'"];
     }
@@ -1404,7 +1575,18 @@ function fml_retry_failed_nft_minting($license_id, $force = false) {
     }
 
     // Attempt minting with IPFS
-    return fml_mint_license_nft_with_ipfs($license_id, $wallet_address);
+    $result = fml_mint_license_nft_with_ipfs($license_id, $wallet_address);
+
+    // Update the queue with the result
+    if (function_exists('fml_update_nft_queue_item')) {
+        if ($result['success']) {
+            fml_update_nft_queue_item($license_id, 'completed');
+        } else {
+            fml_update_nft_queue_item($license_id, 'failed', $result['error'] ?? 'Unknown error');
+        }
+    }
+
+    return $result;
 }
 
 /**
@@ -1454,4 +1636,85 @@ function fml_admin_retry_nft_minting() {
     } else {
         wp_send_json_error($result);
     }
+}
+
+
+/**
+ * ============================================================================
+ * AUTOMATIC IPFS RETRY FOR PENDING LICENSES
+ * ============================================================================
+ */
+
+/**
+ * Schedule IPFS retry cron job
+ */
+add_action('init', function() {
+    if (!wp_next_scheduled('fml_retry_ipfs_pending_licenses')) {
+        wp_schedule_event(time(), 'hourly', 'fml_retry_ipfs_pending_licenses');
+    }
+});
+
+/**
+ * Process IPFS pending licenses
+ */
+add_action('fml_retry_ipfs_pending_licenses', 'fml_process_ipfs_pending_licenses');
+
+function fml_process_ipfs_pending_licenses() {
+    error_log("=== Running IPFS pending retry cron ===");
+
+    // Find licenses with ipfs_pending status
+    $params = [
+        'where' => "nft_status.meta_value = 'ipfs_pending'",
+        'limit' => 5 // Process max 5 at a time to avoid timeout
+    ];
+
+    $licenses = pods('license', $params);
+    $count = 0;
+
+    while ($licenses->fetch()) {
+        $license_id = $licenses->field('ID');
+        $wallet_address = $licenses->field('wallet_address');
+
+        if (is_array($wallet_address)) {
+            $wallet_address = $wallet_address[0] ?? '';
+        }
+
+        if (empty($wallet_address)) {
+            error_log("IPFS retry: License #{$license_id} has no wallet address, skipping");
+            continue;
+        }
+
+        error_log("IPFS retry: Attempting license #{$license_id}");
+
+        // Update status to processing
+        $license_pod = pods('license', $license_id);
+        $license_pod->save(['nft_status' => 'processing']);
+
+        // Retry the minting
+        $result = fml_mint_license_nft_with_ipfs($license_id, $wallet_address);
+
+        if ($result['success'] && empty($result['partial'])) {
+            error_log("IPFS retry: License #{$license_id} succeeded");
+            $count++;
+        } else {
+            error_log("IPFS retry: License #{$license_id} still pending - " . ($result['error'] ?? 'partial success'));
+        }
+    }
+
+    error_log("=== IPFS pending retry cron complete: {$count} licenses processed ===");
+}
+
+/**
+ * Manually trigger IPFS retry (for admin use)
+ */
+add_action('wp_ajax_fml_retry_all_ipfs_pending', 'fml_admin_retry_all_ipfs_pending');
+
+function fml_admin_retry_all_ipfs_pending() {
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(['message' => 'Unauthorized']);
+        return;
+    }
+
+    fml_process_ipfs_pending_licenses();
+    wp_send_json_success(['message' => 'IPFS retry process triggered']);
 }

@@ -651,22 +651,32 @@ jQuery(function($) {
 
 
 //
-// VISUALIZER TOGGLE - Controls audio reactivity on the background particles
+// VISUALIZER TOGGLE - Controls audio reactivity on the background particles (Three.js)
 //
 jQuery(function($) {
     var visualizerActive = false;
+    var $btn = $('#toggle-visualizer');
 
-    $('#toggle-visualizer').on('click', function() {
+    $btn.on('click', function() {
         visualizerActive = !visualizerActive;
         $(this).toggleClass('active', visualizerActive);
 
-        // Toggle audio reactivity on the main background particles
+        // Toggle audio reactivity on the main Three.js background particles
+        // This should affect background-particles.js, NOT player-visualizer.js
         if (typeof window.toggleBackgroundAudioVisualizer === 'function') {
             window.toggleBackgroundAudioVisualizer(visualizerActive);
+            console.log('[Visualizer] Three.js background particles:', visualizerActive ? 'ON' : 'OFF');
         } else {
-            console.warn('Background particles not loaded. Audio visualizer unavailable.');
+            console.warn('[Visualizer] window.toggleBackgroundAudioVisualizer not found - background-particles.js may not be loaded');
+            // Still toggle the visual state so user knows they clicked
+            $(this).attr('title', visualizerActive ? 'Visualizer ON (waiting for background)' : 'Toggle visualizer');
         }
     });
+
+    // Expose state globally so background-particles.js can check initial state
+    window.isVisualizerActive = function() {
+        return visualizerActive;
+    };
 });
 
 

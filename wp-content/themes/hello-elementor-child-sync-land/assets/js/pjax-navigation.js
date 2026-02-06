@@ -384,7 +384,7 @@
         showLoading: function() {
             var $loader = $('#loading-screen');
             if ($loader.length) {
-                $loader.css('display', 'block');
+                $loader.css('display', 'flex');
             }
         },
 

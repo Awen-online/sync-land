@@ -316,6 +316,12 @@ function fml_add_to_cart_shortcode($atts) {
                 </div>
             </div>
 
+            <?php
+            $nmkr_mode = function_exists('fml_get_nmkr_mode') ? fml_get_nmkr_mode() : 'preprod';
+            $wallet_placeholder = ($nmkr_mode === 'preprod')
+                ? 'Cardano preprod address (addr_test1...)'
+                : 'Cardano wallet address (addr1...)';
+            ?>
             <div class="fml-option-group fml-nft-option">
                 <label class="fml-checkbox-option">
                     <input type="checkbox" name="fml_include_nft_<?php echo $song_id; ?>" class="fml-nft-add-checkbox">
@@ -326,9 +332,16 @@ function fml_add_to_cart_shortcode($atts) {
                     </span>
                 </label>
 
-                <div class="fml-wallet-input-add hidden">
-                    <input type="text" name="fml_wallet_<?php echo $song_id; ?>" class="fml-wallet-input-field"
-                           placeholder="Cardano wallet address (addr1...)">
+                <div class="fml-wallet-input-add hidden" data-nmkr-mode="<?php echo esc_attr($nmkr_mode); ?>">
+                    <label class="fml-wallet-label">Cardano Wallet Address <span class="required">*</span></label>
+                    <div class="fml-wallet-input-wrapper">
+                        <input type="text" name="fml_wallet_<?php echo $song_id; ?>" class="fml-wallet-input-field"
+                               placeholder="<?php echo esc_attr($wallet_placeholder); ?>"
+                               data-nmkr-mode="<?php echo esc_attr($nmkr_mode); ?>">
+                        <span class="fml-wallet-validation-icon"></span>
+                    </div>
+                    <span class="fml-wallet-validation-msg"></span>
+                    <span class="fml-wallet-hint">Your NFT license will be minted and sent to this address</span>
                 </div>
             </div>
         </div>
