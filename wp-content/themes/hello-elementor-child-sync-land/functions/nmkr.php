@@ -1109,50 +1109,49 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
     $meta_licensee = fml_truncate_metadata_string($legal_name_value);
     $meta_license_type = fml_truncate_metadata_string($license_type_label);
 
+    // Use metadataPlaceholder with EXACT names from NMKR template
+    // Based on the NMKR metadata output, the template uses these exact field names (case-sensitive):
+    // Title, Description, License Description, Licensor, Licensee, Artist, Publisher, Composer, etc.
     $upload_data = [
         'tokenname' => $token_name,
         'displayname' => $display_name,
         'metadataPlaceholder' => [
-            // Match NMKR project CIP25 template placeholders EXACTLY (without angle brackets)
-            // All values truncated to 64 bytes max for CIP-25 compliance
-            ['name' => 'display_name', 'value' => $display_name],
-            ['name' => 'project_description', 'value' => $meta_project_desc],
-            ['name' => 'title', 'value' => $meta_title],
-            ['name' => 'description', 'value' => $meta_description],
-            ['name' => 'license_description', 'value' => $meta_license_type],
-            ['name' => 'licensor', 'value' => $meta_licensor],
-            ['name' => 'licensee', 'value' => $meta_licensee],
-            ['name' => 'compositionrecording', 'value' => 'Master Recording and Sync'],
-            ['name' => 'artist', 'value' => $meta_artist],
-            ['name' => 'publisher', 'value' => $meta_artist],
-            ['name' => 'composer', 'value' => $meta_artist],
-            ['name' => 'fee', 'value' => $license_type === 'non_exclusive' ? 'Paid' : 'Free CC-BY'],
-            ['name' => 'territory', 'value' => 'Worldwide'],
-            ['name' => 'media_types', 'value' => 'All Media'],
-            ['name' => 'term', 'value' => 'Perpetual'],
-            ['name' => 'usage_duration', 'value' => 'Unlimited'],
-            ['name' => 'license_pdf', 'value' => $license_pdf_for_metadata ?: 'N/A']  // IPFS URL fits in 64 bytes
+            // Match NMKR project template placeholders EXACTLY (case-sensitive)
+            ['name' => 'Title', 'value' => $meta_title],
+            ['name' => 'Description', 'value' => fml_truncate_metadata_string("Sync license for {$song_title} by {$artist_name}")],
+            ['name' => 'License Description', 'value' => $meta_license_type],
+            ['name' => 'Licensor', 'value' => $meta_licensor],
+            ['name' => 'Licensee', 'value' => $meta_licensee],
+            ['name' => 'Composition/Recording', 'value' => 'Master Recording and Sync'],
+            ['name' => 'Artist', 'value' => $meta_artist],
+            ['name' => 'Publisher', 'value' => $meta_artist],
+            ['name' => 'Composer', 'value' => $meta_artist],
+            ['name' => 'Fee', 'value' => $license_type === 'non_exclusive' ? 'Paid' : 'Free CC-BY'],
+            ['name' => 'Territory', 'value' => 'Worldwide'],
+            ['name' => 'Media Types', 'value' => 'All Media'],
+            ['name' => 'Term', 'value' => 'Perpetual'],
+            ['name' => 'Usage Duration', 'value' => 'Unlimited'],
+            ['name' => 'License PDF', 'value' => $license_pdf_for_metadata ?: $license_url]
         ],
         'previewImageNft' => $preview_image_data
     ];
 
-    error_log("Metadata placeholders: display_name={$display_name}, artist={$meta_artist}, licensee={$meta_licensee}");
+    error_log("Using metadataPlaceholder with proper case. Token: {$token_name}, Artist: {$meta_artist}");
+    error_log("License PDF in metadata: " . ($license_pdf_for_metadata ?: $license_url));
 
     // NOTE: Not adding subfiles - the CIP25 template only has one file entry (the image)
     // The license PDF URL is stored in the 'license_pdf' metadata field instead
 
     // Log the full upload data for debugging
-    error_log("=== NMKR Upload Data (excluding base64 image) ===");
+    error_log("=== NMKR Upload Data ===");
     $debug_data = $upload_data;
     if (isset($debug_data['previewImageNft']['fileFromBase64'])) {
-        $debug_data['previewImageNft']['fileFromBase64'] = '[BASE64_DATA_' . strlen($upload_data['previewImageNft']['fileFromBase64']) . '_chars]';
+        $debug_data['previewImageNft']['fileFromBase64'] = '[BASE64_' . strlen($upload_data['previewImageNft']['fileFromBase64']) . '_chars]';
     }
-    error_log(json_encode($debug_data, JSON_PRETTY_PRINT));
-
-    error_log("=== NMKR Upload NFT Request ===");
-    error_log("API URL: {$upload_url}");
     error_log("Token Name: {$token_name}");
-    error_log("Upload Data: " . json_encode($upload_data));
+    error_log("Display Name: {$display_name}");
+    error_log("Metadata Override: " . json_encode($nft_metadata, JSON_PRETTY_PRINT));
+    error_log("API URL: {$upload_url}");
 
     // Upload the NFT
     $upload_response = wp_remote_post($upload_url, [
@@ -1221,21 +1220,34 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
     if (!is_wp_error($nft_details_response)) {
         $nft_details = json_decode(wp_remote_retrieve_body($nft_details_response), true);
         error_log("=== NFT Details from NMKR ===");
+        error_log("Full details: " . json_encode($nft_details));
         error_log("State: " . ($nft_details['state'] ?? 'unknown'));
-        error_log("Blocked: " . ($nft_details['blocked'] ?? 'unknown'));
-        error_log("Error: " . ($nft_details['error'] ?? $nft_details['errorMessage'] ?? 'none'));
+        error_log("Blocked: " . (isset($nft_details['blocked']) ? ($nft_details['blocked'] ? 'true' : 'false') : 'unknown'));
+        error_log("Error: " . ($nft_details['error'] ?? $nft_details['errorMessage'] ?? $nft_details['blockedReason'] ?? 'none'));
 
         // If there's an error or it's blocked, return that
         if (!empty($nft_details['error']) || !empty($nft_details['errorMessage'])) {
             $nft_error = $nft_details['error'] ?? $nft_details['errorMessage'];
             error_log("NFT has error in NMKR: {$nft_error}");
+            $license_pod->save(['nft_status' => 'failed']);
+            if (function_exists('fml_update_nft_queue_item')) {
+                fml_update_nft_queue_item($license_id, 'failed', "NMKR error: {$nft_error}");
+            }
             return ['success' => false, 'error' => "NMKR NFT error: {$nft_error}", 'nft_details' => $nft_details];
         }
 
         if (isset($nft_details['blocked']) && $nft_details['blocked'] === true) {
-            error_log("NFT is blocked in NMKR");
-            return ['success' => false, 'error' => 'NFT is blocked - check metadata in NMKR dashboard', 'nft_details' => $nft_details];
+            $block_reason = $nft_details['blockedReason'] ?? $nft_details['blockReason'] ?? 'Unknown reason';
+            error_log("NFT is blocked in NMKR. Reason: {$block_reason}");
+            error_log("Full NFT details: " . json_encode($nft_details));
+            $license_pod->save(['nft_status' => 'failed']);
+            if (function_exists('fml_update_nft_queue_item')) {
+                fml_update_nft_queue_item($license_id, 'failed', "NFT blocked: {$block_reason}");
+            }
+            return ['success' => false, 'error' => "NFT blocked by NMKR: {$block_reason}", 'nft_details' => $nft_details];
         }
+    } else {
+        error_log("Failed to get NFT details: " . $nft_details_response->get_error_message());
     }
 
     // ========================================

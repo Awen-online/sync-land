@@ -1,12 +1,12 @@
 <?php
 /**
  * Plugin Name: Music Player
- * Plugin URI: https://cullah.com
+ * Plugin URI: https://github.com/mcculloughi
  * Description: Display the music player using a shortcode to insert into sticky footer
  * Version: 0.1
  * Text Domain: music-player
- * Author: Cullah
- * Author URI: https://cullah.com
+ * Author: mcculloughi
+ * Author URI: https://github.com/mcculloughi
  */
 
  function fml_music_player_function($atts) {
