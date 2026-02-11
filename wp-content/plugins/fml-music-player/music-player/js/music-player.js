@@ -108,9 +108,15 @@ jQuery(function($) {
                 Amplitude.pause();
             }
         }
+
     } else {
         console.log("No songs in queue. Player will initialize when a song is played.");
     }
+
+    // Always initialize the simulated audio analyser (doesn't require audio element)
+    setTimeout(function() {
+        initAudioAnalyser();
+    }, 500);
 
     // Store callbacks globally so playNow/playAll can use them
     window.FMLAmplitudeCallbacks = amplitudeCallbacks;
@@ -266,51 +272,82 @@ jQuery(function($) {
 
     //
     // AUDIO ANALYSER FOR VISUALIZER
+    // Due to CORS restrictions with external audio sources (S3, etc.),
+    // we cannot use Web Audio API's MediaElementSource without breaking playback.
+    // Instead, we simulate audio reactivity based on play state and time-based animation.
     //
 
+    var isAnalyserRunning = false;
+    var simulatedBeat = 0;
+
     function initAudioAnalyser() {
-        try {
-            var analyser = Amplitude.getAnalyser();
-            if (analyser) {
-                window.FMLAudioData.analyser = analyser;
-                updateAudioData();
-            }
-        } catch (e) {
-            console.log("Audio analyser not available:", e);
+        // Start the simulated audio data loop
+        if (!isAnalyserRunning) {
+            isAnalyserRunning = true;
+            updateAudioData();
+            console.log("Audio analyser: Started simulated audio reactivity");
         }
     }
 
     function updateAudioData() {
-        if (!window.FMLAudioData.analyser || !window.FMLAudioData.isPlaying) return;
+        // Always request the next frame to keep the loop alive
+        requestAnimationFrame(updateAudioData);
 
-        var analyser = window.FMLAudioData.analyser;
-        var bufferLength = analyser.frequencyBinCount;
-        var dataArray = new Uint8Array(bufferLength);
-        analyser.getByteFrequencyData(dataArray);
+        // Simulate audio reactivity when music is playing
+        if (window.FMLAudioData.isPlaying) {
+            // Create time-based pseudo-random variations that feel musical
+            var time = Date.now() * 0.001;
 
-        // Calculate frequency bands
-        var bassSum = 0, midSum = 0, trebleSum = 0, totalSum = 0;
-        var bassCount = Math.floor(bufferLength * 0.1);
-        var midCount = Math.floor(bufferLength * 0.4);
+            // Simulate a beat pattern (roughly 120 BPM = 2 beats per second)
+            var beatPhase = (time * 2) % 1;
+            var beat = Math.pow(Math.max(0, Math.sin(beatPhase * Math.PI * 2)), 4);
 
-        for (var i = 0; i < bufferLength; i++) {
-            totalSum += dataArray[i];
-            if (i < bassCount) {
-                bassSum += dataArray[i];
-            } else if (i < bassCount + midCount) {
-                midSum += dataArray[i];
-            } else {
-                trebleSum += dataArray[i];
+            // Simulate bass (slower, stronger pulses)
+            var bassPulse = Math.pow(Math.max(0, Math.sin(time * 2 * Math.PI)), 2) * 0.7;
+            bassPulse += beat * 0.3;
+
+            // Simulate mid (medium frequency variations)
+            var midPulse = Math.sin(time * 3.5 * Math.PI) * 0.3 + 0.4;
+            midPulse += Math.sin(time * 7 * Math.PI) * 0.15;
+
+            // Simulate treble (faster, smaller variations)
+            var treblePulse = Math.sin(time * 8 * Math.PI) * 0.2 + 0.3;
+            treblePulse += Math.sin(time * 15 * Math.PI) * 0.1;
+            treblePulse += Math.random() * 0.1; // Add some sparkle
+
+            // Overall intensity
+            var intensity = (bassPulse + midPulse + treblePulse) / 3;
+
+            // Apply with some smoothing
+            window.FMLAudioData.bass = Math.min(1, Math.max(0, bassPulse));
+            window.FMLAudioData.mid = Math.min(1, Math.max(0, midPulse));
+            window.FMLAudioData.treble = Math.min(1, Math.max(0, treblePulse));
+            window.FMLAudioData.intensity = Math.min(1, Math.max(0, intensity));
+        } else {
+            // Fade out smoothly when not playing
+            window.FMLAudioData.bass *= 0.95;
+            window.FMLAudioData.mid *= 0.95;
+            window.FMLAudioData.treble *= 0.95;
+            window.FMLAudioData.intensity *= 0.95;
+
+            // Zero out when very small
+            if (window.FMLAudioData.intensity < 0.01) {
+                window.FMLAudioData.bass = 0;
+                window.FMLAudioData.mid = 0;
+                window.FMLAudioData.treble = 0;
+                window.FMLAudioData.intensity = 0;
             }
         }
-
-        window.FMLAudioData.bass = (bassSum / bassCount) / 255;
-        window.FMLAudioData.mid = (midSum / midCount) / 255;
-        window.FMLAudioData.treble = (trebleSum / (bufferLength - bassCount - midCount)) / 255;
-        window.FMLAudioData.intensity = (totalSum / bufferLength) / 255;
-
-        requestAnimationFrame(updateAudioData);
     }
+
+    // Expose function for compatibility (no-op now since we don't connect to audio element)
+    window.FMLReinitAudioAnalyser = function() {
+        // Just ensure the loop is running
+        if (!isAnalyserRunning) {
+            isAnalyserRunning = true;
+            updateAudioData();
+        }
+    };
 
     //
     // QUEUE DISPLAY FUNCTIONS
@@ -420,6 +457,13 @@ jQuery(function($) {
         });
 
         updateQueueDisplay();
+
+        // Reinitialize audio analyser for the new audio element
+        setTimeout(function() {
+            if (window.FMLReinitAudioAnalyser) {
+                window.FMLReinitAudioAnalyser();
+            }
+        }, 100);
     }
 
     //
@@ -511,6 +555,13 @@ jQuery(function($) {
 
         // Update player meta immediately
         if (window.updatePlayerMeta) window.updatePlayerMeta();
+
+        // Reinitialize audio analyser for the new audio element
+        setTimeout(function() {
+            if (window.FMLReinitAudioAnalyser) {
+                window.FMLReinitAudioAnalyser();
+            }
+        }, 100);
     };
 
     //
@@ -536,6 +587,13 @@ jQuery(function($) {
                 callbacks: window.FMLAmplitudeCallbacks || {}
             });
             newIndex = 0;
+
+            // Reinitialize audio analyser for the new audio element
+            setTimeout(function() {
+                if (window.FMLReinitAudioAnalyser) {
+                    window.FMLReinitAudioAnalyser();
+                }
+            }, 100);
         } else {
             newIndex = Amplitude.addSong(songObj);
         }
@@ -606,6 +664,13 @@ jQuery(function($) {
         Amplitude.bindNewElements();
         if (window.updatePlayerMeta) window.updatePlayerMeta();
 
+        // Reinitialize audio analyser for the new audio element
+        setTimeout(function() {
+            if (window.FMLReinitAudioAnalyser) {
+                window.FMLReinitAudioAnalyser();
+            }
+        }, 100);
+
         // Show feedback
         var $btn = $(this);
         var originalHtml = $btn.html();
@@ -644,6 +709,13 @@ jQuery(function($) {
             });
             Amplitude.bindNewElements();
             if (window.updatePlayerMeta) window.updatePlayerMeta();
+
+            // Reinitialize audio analyser for the new audio element
+            setTimeout(function() {
+                if (window.FMLReinitAudioAnalyser) {
+                    window.FMLReinitAudioAnalyser();
+                }
+            }, 100);
         }
     });
 

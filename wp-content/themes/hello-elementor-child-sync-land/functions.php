@@ -134,6 +134,11 @@ add_action('wp_enqueue_scripts', function() {
     wp_enqueue_script('three-buffer-geometry-utils', 'https://cdn.jsdelivr.net/npm/three/examples/js/utils/BufferGeometryUtils.js', array('three-js'), null, true);
     wp_enqueue_script('threejs-background',get_stylesheet_directory_uri() . '/assets/js/background-particles.js', array('three-js'), $style_version, true);
     wp_enqueue_script('inner-planet', get_stylesheet_directory_uri() . '/assets/js/inner-planet.js', array('three-js'), $style_version, true); // Enqueue the new script
+
+    // Hero Planet
+    wp_enqueue_style('hero-planet-style', get_stylesheet_directory_uri() . '/assets/css/hero-planet.css', array(), $style_version);
+    wp_enqueue_script('hero-planet', get_stylesheet_directory_uri() . '/assets/js/hero-planet.js', array('three-js', 'inner-planet'), $style_version, true);
+
     wp_enqueue_script('fml-search', get_stylesheet_directory_uri() . '/assets/js/search.js', array(), $style_version, true);
     wp_enqueue_script('fml-cart', get_stylesheet_directory_uri() . '/assets/js/cart.js', array('jquery'), $style_version, true);
 
@@ -191,6 +196,7 @@ require get_stylesheet_directory().'/functions/myaccount.php';
 require get_stylesheet_directory().'/functions/forms.php';
 require get_stylesheet_directory().'/functions/shortcodes.php';
 require get_stylesheet_directory().'/functions/shortcodes/shortcodes_artists.php';
+require get_stylesheet_directory().'/functions/shortcodes-animation.php';
 require get_stylesheet_directory().'/functions/shortcodes/songupload.php';
 // require get_stylesheet_directory().'/functions/nav_menu.php';
 // require get_stylesheet_directory().'/functions/analytics.php';

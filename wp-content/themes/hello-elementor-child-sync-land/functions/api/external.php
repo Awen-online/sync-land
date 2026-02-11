@@ -21,6 +21,23 @@ if (!defined('ABSPATH')) {
  */
 
 add_action('rest_api_init', function() {
+    // Get random song for hero planet
+    register_rest_route('FML/v1', '/songs/random', [
+        'methods' => 'GET',
+        'callback' => 'fml_get_random_song',
+        'permission_callback' => 'fml_permission_public_rate_limited',
+        'args' => [
+            'genre' => [
+                'required' => false,
+                'sanitize_callback' => 'sanitize_text_field'
+            ],
+            'mood' => [
+                'required' => false,
+                'sanitize_callback' => 'sanitize_text_field'
+            ]
+        ]
+    ]);
+
     // Get single song
     register_rest_route('FML/v1', '/songs/(?P<id>\d+)', [
         'methods' => 'GET',
@@ -113,6 +130,194 @@ function fml_get_song(WP_REST_Request $request) {
     $song_data = fml_format_song($song_pod);
 
     return fml_api_success(['song' => $song_data]);
+}
+
+/**
+ * Get a random published song
+ * Uses WP_Query instead of Pods find() to avoid SQL restrictions
+ */
+function fml_get_random_song(WP_REST_Request $request) {
+    // Get a random published song using WP_Query
+    $query = new WP_Query([
+        'post_type'      => 'song',
+        'post_status'    => 'publish',
+        'posts_per_page' => 1,
+        'orderby'        => 'rand',
+    ]);
+
+    if (!$query->have_posts()) {
+        wp_reset_postdata();
+        return fml_api_error('No songs found', 'not_found', 404);
+    }
+
+    $query->the_post();
+    $song_id = get_the_ID();
+    wp_reset_postdata();
+
+    // Use Pods to get full song data with relationships
+    $song_pod = pods('song', $song_id);
+
+    if (!$song_pod || !$song_pod->exists()) {
+        return fml_api_error('Song not found', 'not_found', 404);
+    }
+
+    $song_data = fml_format_song_full($song_pod);
+
+    return fml_api_success(['song' => $song_data]);
+}
+
+/**
+ * Format a taxonomy term with name and permalink
+ */
+function fml_format_taxonomy_term($term, $taxonomy) {
+    $name = '';
+    $term_id = null;
+
+    if (is_object($term) && isset($term->name)) {
+        $name = $term->name;
+        $term_id = isset($term->term_id) ? $term->term_id : null;
+    } elseif (is_array($term) && isset($term['name'])) {
+        $name = $term['name'];
+        $term_id = isset($term['term_id']) ? $term['term_id'] : null;
+    } elseif (is_string($term) && !empty($term)) {
+        $name = $term;
+    }
+
+    if (empty($name)) {
+        return null;
+    }
+
+    // Try to get the permalink
+    $permalink = '';
+    if ($term_id) {
+        $permalink = get_term_link($term_id, $taxonomy);
+        if (is_wp_error($permalink)) {
+            $permalink = '';
+        }
+    } else {
+        // Try to find the term by name
+        $found_term = get_term_by('name', $name, $taxonomy);
+        if ($found_term && !is_wp_error($found_term)) {
+            $permalink = get_term_link($found_term, $taxonomy);
+            if (is_wp_error($permalink)) {
+                $permalink = '';
+            }
+        }
+    }
+
+    return [
+        'name' => $name,
+        'permalink' => $permalink
+    ];
+}
+
+/**
+ * Format song data with full metadata for hero planet
+ */
+function fml_format_song_full($song_pod) {
+    $song_id = intval($song_pod->id());
+
+    // Get artist data
+    $artist_data = $song_pod->field('artist');
+    $artist_name = 'Unknown Artist';
+    $artist_id = null;
+    $artist_permalink = '';
+
+    if (!empty($artist_data)) {
+        $artist_id = is_array($artist_data) ? $artist_data['ID'] : $artist_data;
+        $artist_pod = pods('artist', $artist_id);
+        if ($artist_pod && $artist_pod->exists()) {
+            $artist_name = $artist_pod->field('post_title');
+            $artist_permalink = get_permalink($artist_id);
+        }
+    }
+
+    // Get album data and cover art from album
+    $album_data = $song_pod->field('album');
+    $album_name = '';
+    $album_id = null;
+    $album_permalink = '';
+    $cover_art_url = '';
+
+    if (!empty($album_data)) {
+        $album_id = is_array($album_data) ? $album_data['ID'] : $album_data;
+        $album_pod = pods('album', $album_id);
+        if ($album_pod && $album_pod->exists()) {
+            $album_name = $album_pod->field('post_title');
+            $album_permalink = get_permalink($album_id);
+            // Get cover art from album's featured image
+            $cover_art_url = get_the_post_thumbnail_url($album_id, 'medium') ?: '';
+        }
+    }
+
+    // Fallback to song's featured image if no album cover
+    if (empty($cover_art_url)) {
+        $cover_art_url = get_the_post_thumbnail_url($song_id, 'medium') ?: '';
+    }
+
+    // Get audio URL
+    $audio_url = $song_pod->field('audio_url') ?: '';
+
+    // Format genre - return array of objects with name and permalink
+    $genre_raw = $song_pod->field('genre');
+    $genres = [];
+    if (!empty($genre_raw)) {
+        if (is_array($genre_raw)) {
+            foreach ($genre_raw as $g) {
+                $genre_item = fml_format_taxonomy_term($g, 'genre');
+                if ($genre_item) {
+                    $genres[] = $genre_item;
+                }
+            }
+        } else {
+            $genre_item = fml_format_taxonomy_term($genre_raw, 'genre');
+            if ($genre_item) {
+                $genres[] = $genre_item;
+            }
+        }
+    }
+
+    // Format mood - return array of objects with name and permalink
+    $mood_raw = $song_pod->field('mood');
+    $moods = [];
+    if (!empty($mood_raw)) {
+        if (is_array($mood_raw)) {
+            foreach ($mood_raw as $m) {
+                $mood_item = fml_format_taxonomy_term($m, 'mood');
+                if ($mood_item) {
+                    $moods[] = $mood_item;
+                }
+            }
+        } else {
+            $mood_item = fml_format_taxonomy_term($mood_raw, 'mood');
+            if ($mood_item) {
+                $moods[] = $mood_item;
+            }
+        }
+    }
+
+    // Get BPM as simple value
+    $bpm = $song_pod->field('bpm');
+    if (is_array($bpm)) {
+        $bpm = isset($bpm['value']) ? $bpm['value'] : (isset($bpm[0]) ? $bpm[0] : '');
+    }
+
+    return [
+        'id' => $song_id,
+        'name' => $song_pod->field('post_title'),
+        'audio_url' => $audio_url,
+        'artist_name' => $artist_name,
+        'artist_id' => $artist_id,
+        'artist_permalink' => $artist_permalink,
+        'album_name' => $album_name,
+        'album_id' => $album_id,
+        'album_permalink' => $album_permalink,
+        'cover_art_url' => $cover_art_url,
+        'genres' => $genres,
+        'moods' => $moods,
+        'bpm' => $bpm,
+        'permalink' => get_permalink($song_id)
+    ];
 }
 
 /**
