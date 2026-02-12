@@ -12,8 +12,9 @@ $session_id = isset($_GET['session_id']) ? sanitize_text_field($_GET['session_id
 
 // Get all licenses for the logged in user
 $paramsLicenses = array(
-    'where' => "user.id = '" . $current_user->ID . "' AND t.post_status = 'Publish'",
-    "orderby" => "datetime.meta_value DESC"
+    'where' => "user.id = '" . $current_user->ID . "' AND t.post_status = 'publish'",
+    "orderby" => "datetime.meta_value DESC",
+    "limit" => -1  // Get all licenses, not just the default 15
 );
 $licenses = pods('license', $paramsLicenses);
 $total_licenses = $licenses->total();
@@ -27,10 +28,26 @@ $nft_pending_count = 0;
 // Store licenses in array for re-use
 $licenses_array = [];
 while ($licenses->fetch()) {
+    // Handle license_type - might be array, string, or empty
+    $raw_license_type = $licenses->field('license_type');
+    if (is_array($raw_license_type)) {
+        $license_type = !empty($raw_license_type) ? $raw_license_type[0] : 'cc_by';
+    } else {
+        $license_type = !empty($raw_license_type) ? $raw_license_type : 'cc_by';
+    }
+
+    // Handle nft_status - might be array
+    $raw_nft_status = $licenses->field('nft_status');
+    if (is_array($raw_nft_status)) {
+        $nft_status = !empty($raw_nft_status) ? $raw_nft_status[0] : 'none';
+    } else {
+        $nft_status = !empty($raw_nft_status) ? $raw_nft_status : 'none';
+    }
+
     $license_data = [
         'ID' => $licenses->field('ID'),
-        'license_type' => $licenses->field('license_type') ?: 'cc_by',
-        'nft_status' => $licenses->field('nft_status') ?: 'none',
+        'license_type' => $license_type,
+        'nft_status' => $nft_status,
         'nft_transaction_hash' => $licenses->field('nft_transaction_hash'),
         'license_url' => $licenses->field('license_url'),
         'licensor' => $licenses->field('licensor'),
@@ -40,7 +57,7 @@ while ($licenses->fetch()) {
     ];
 
     // Count by type
-    if ($license_data['license_type'] === 'non_exclusive') {
+    if ($license_type === 'non_exclusive') {
         $commercial_count++;
     } else {
         $cc_by_count++;

@@ -330,7 +330,10 @@
      * Add item to cart
      */
     function addToCart(songId, licenseType, includeNft, walletAddress, $btn) {
-        const nonce = $btn.closest('[data-nonce]').data('nonce') || $('#fml-cart').data('nonce');
+        // Try to get nonce from various sources: wrapper, cart page, or license modal
+        const nonce = $btn.closest('[data-nonce]').data('nonce')
+            || $('#fml-cart').data('nonce')
+            || $('#license-modal').data('nonce');
 
         $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Adding...');
 
@@ -353,6 +356,13 @@
 
                     updateCartCount(response.data.item_count);
                     showNotification('Added to cart!', 'success');
+
+                    // Close the license modal if the button is inside it
+                    if ($btn.closest('#license-modal').length && typeof window.closeLicenseModal === 'function') {
+                        setTimeout(function() {
+                            window.closeLicenseModal();
+                        }, 800);
+                    }
                 } else {
                     $btn.prop('disabled', false).html('<i class="fas fa-cart-plus"></i> Add to Cart');
                     showNotification(response.error || 'Failed to add to cart', 'error');

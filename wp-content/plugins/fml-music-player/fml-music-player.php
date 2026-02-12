@@ -66,9 +66,32 @@
             
           </div>
             <!-- License button -->
-            <a id="license-button" href="#" class="player-license-btn" title="License this song" target="_blank">
+            <button id="license-button" class="player-license-btn" title="License this song" data-song-id="" data-song-permalink="">
                 <i class="fas fa-file-contract"></i>
-            </a>
+            </button>
+
+            <!-- License Modal -->
+            <div id="license-modal" class="fml-license-modal" style="display:none;" data-nonce="<?php echo wp_create_nonce('wp_rest'); ?>">
+                <div class="fml-license-modal-header">
+                    <h3><i class="fas fa-file-contract"></i> License This Song</h3>
+                    <button class="fml-license-modal-close">&times;</button>
+                </div>
+                <div class="fml-license-modal-body">
+                    <div class="fml-license-modal-song-info">
+                        <img id="license-modal-cover" src="" alt="Album Art" class="fml-license-modal-cover">
+                        <div class="fml-license-modal-meta">
+                            <h4 id="license-modal-title"></h4>
+                            <p id="license-modal-artist"></p>
+                        </div>
+                    </div>
+                    <div id="license-modal-content" class="fml-license-modal-content">
+                        <div class="fml-license-modal-loading">
+                            <i class="fas fa-spinner fa-spin"></i> Loading...
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div id="license-modal-overlay" class="fml-license-modal-overlay" style="display:none;"></div>
 
             <!-- Visualizer toggle -->
             <button id="toggle-visualizer" class="visualizer-toggle" title="Toggle visualizer">

@@ -19,6 +19,92 @@ if (!defined('ABSPATH')) {
 
 /**
  * ============================================================================
+ * FALLBACK: Process checkout on success redirect (for local dev without webhooks)
+ * ============================================================================
+ */
+add_action('template_redirect', 'fml_process_checkout_on_success_redirect');
+
+function fml_process_checkout_on_success_redirect() {
+    // Only run on the licenses page with payment=success
+    if (!isset($_GET['payment']) || $_GET['payment'] !== 'success') {
+        return;
+    }
+
+    if (!isset($_GET['session_id']) || empty($_GET['session_id'])) {
+        return;
+    }
+
+    $session_id = sanitize_text_field($_GET['session_id']);
+
+    // Check if we've already processed this session
+    $processed_key = 'fml_processed_' . $session_id;
+
+    if (get_transient($processed_key)) {
+        // Already fully processed
+        error_log("Session {$session_id} already processed, skipping");
+        return;
+    }
+
+    error_log("=== FALLBACK: Processing checkout on success redirect ===");
+    error_log("Session ID: {$session_id}");
+
+    // Fetch session from Stripe
+    $stripe_secret_key = fml_get_stripe_secret_key();
+    if (empty($stripe_secret_key)) {
+        error_log("Stripe not configured");
+        return;
+    }
+
+    $response = wp_remote_get("https://api.stripe.com/v1/checkout/sessions/{$session_id}", [
+        'headers' => [
+            'Authorization' => 'Bearer ' . $stripe_secret_key
+        ],
+        'timeout' => 30
+    ]);
+
+    if (is_wp_error($response)) {
+        error_log("Failed to fetch session from Stripe: " . $response->get_error_message());
+        return;
+    }
+
+    $session = json_decode(wp_remote_retrieve_body($response), true);
+
+    if (isset($session['error'])) {
+        error_log("Stripe API error: " . json_encode($session['error']));
+        return;
+    }
+
+    // Check payment status
+    if ($session['payment_status'] !== 'paid') {
+        error_log("Session {$session_id} payment status is not 'paid': " . $session['payment_status']);
+        return;
+    }
+
+    error_log("Session retrieved from Stripe: " . json_encode($session['metadata'] ?? []));
+
+    // Mark as processed BEFORE processing to prevent duplicates
+    set_transient($processed_key, true, DAY_IN_SECONDS);
+
+    // Process the checkout synchronously
+    // This runs when user lands on success page - they see a loading state briefly
+    try {
+        fml_handle_checkout_completed($session);
+        error_log("=== FALLBACK: Checkout processed successfully ===");
+
+        // Clear the cart after successful processing
+        if (is_user_logged_in()) {
+            fml_cart_clear();
+            error_log("Cart cleared for user " . get_current_user_id());
+        }
+    } catch (Exception $e) {
+        error_log("FALLBACK: Error processing checkout: " . $e->getMessage());
+        // Remove the processed marker so it can be retried
+        delete_transient($processed_key);
+    }
+}
+
+/**
+ * ============================================================================
  * STRIPE KEY MANAGEMENT
  * ============================================================================
  */
@@ -163,7 +249,117 @@ add_action('rest_api_init', function() {
         'callback' => 'fml_stripe_webhook_handler',
         'permission_callback' => '__return_true' // Webhooks need to be publicly accessible
     ]);
+
+    // Debug endpoint to manually reprocess a checkout (admin only)
+    register_rest_route('FML/v1', '/stripe/reprocess-checkout', [
+        'methods' => 'POST',
+        'callback' => 'fml_reprocess_checkout_debug',
+        'permission_callback' => function() {
+            return current_user_can('manage_options');
+        }
+    ]);
 });
+
+/**
+ * Debug endpoint to manually reprocess a checkout session
+ * Usage: POST /wp-json/FML/v1/stripe/reprocess-checkout
+ * Body: { "checkout_key": "fml_cart_xxxxx" } or { "session_id": "cs_xxx" }
+ */
+function fml_reprocess_checkout_debug(WP_REST_Request $request) {
+    $checkout_key = $request->get_param('checkout_key');
+    $session_id = $request->get_param('session_id');
+
+    error_log("=== DEBUG: Manual checkout reprocess ===");
+    error_log("checkout_key: " . ($checkout_key ?: 'not provided'));
+    error_log("session_id: " . ($session_id ?: 'not provided'));
+
+    // If we have a checkout_key, try to get the transient data
+    if (!empty($checkout_key)) {
+        $transient_data = get_transient($checkout_key);
+        error_log("Transient data for {$checkout_key}: " . ($transient_data ? json_encode($transient_data) : 'NOT FOUND'));
+
+        if (!$transient_data) {
+            return new WP_REST_Response([
+                'success' => false,
+                'error' => "Transient {$checkout_key} not found or expired"
+            ], 404);
+        }
+
+        // Create a mock session object
+        $mock_session = [
+            'id' => 'debug_' . time(),
+            'payment_intent' => 'debug_pi_' . time(),
+            'metadata' => [
+                'type' => 'cart_checkout',
+                'checkout_key' => $checkout_key,
+                'user_id' => $transient_data['user_id'] ?? get_current_user_id(),
+                'licensee_name' => $transient_data['licensee_name'] ?? '',
+                'project_name' => $transient_data['project_name'] ?? ''
+            ]
+        ];
+
+        error_log("Mock session: " . json_encode($mock_session));
+
+        // Process the checkout
+        fml_handle_cart_checkout_completed($mock_session);
+
+        return new WP_REST_Response([
+            'success' => true,
+            'message' => 'Checkout reprocessed - check debug.log for details',
+            'checkout_key' => $checkout_key
+        ], 200);
+    }
+
+    // If we have a session_id, try to fetch from Stripe
+    if (!empty($session_id)) {
+        $stripe_secret_key = fml_get_stripe_secret_key();
+        if (empty($stripe_secret_key)) {
+            return new WP_REST_Response([
+                'success' => false,
+                'error' => 'Stripe not configured'
+            ], 500);
+        }
+
+        // Fetch session from Stripe
+        $response = wp_remote_get("https://api.stripe.com/v1/checkout/sessions/{$session_id}", [
+            'headers' => [
+                'Authorization' => 'Bearer ' . $stripe_secret_key
+            ]
+        ]);
+
+        if (is_wp_error($response)) {
+            return new WP_REST_Response([
+                'success' => false,
+                'error' => $response->get_error_message()
+            ], 500);
+        }
+
+        $session = json_decode(wp_remote_retrieve_body($response), true);
+        error_log("Stripe session: " . json_encode($session));
+
+        if (isset($session['error'])) {
+            return new WP_REST_Response([
+                'success' => false,
+                'error' => $session['error']['message'] ?? 'Unknown error'
+            ], 400);
+        }
+
+        // Process the checkout
+        fml_handle_cart_checkout_completed($session);
+
+        return new WP_REST_Response([
+            'success' => true,
+            'message' => 'Checkout reprocessed - check debug.log for details',
+            'session_id' => $session_id,
+            'metadata' => $session['metadata'] ?? []
+        ], 200);
+    }
+
+    return new WP_REST_Response([
+        'success' => false,
+        'error' => 'Either checkout_key or session_id is required'
+    ], 400);
+}
 
 /**
  * Handle incoming Stripe webhooks
@@ -233,24 +429,32 @@ function fml_stripe_webhook_handler(WP_REST_Request $request) {
  * Queue checkout session for background processing
  *
  * This ensures webhook responds quickly while heavy work happens async.
+ * Heavy processing (PDF generation, S3 upload) is handled by:
+ * 1. WP Cron background task (production)
+ * 2. Success page redirect fallback (local dev / if cron fails)
  */
 function fml_queue_checkout_processing($session, $event_id) {
     $session_id = $session['id'];
 
-    // Store the session data in a transient for background processing
+    error_log("=== STRIPE WEBHOOK: checkout.session.completed ===");
+    error_log("Session ID: {$session_id}");
+    error_log("Session metadata: " . json_encode($session['metadata'] ?? []));
+
+    // Store the session data in a transient for background/fallback processing
     set_transient('fml_webhook_session_' . $session_id, [
         'session' => $session,
         'event_id' => $event_id,
         'received_at' => current_time('mysql')
     ], HOUR_IN_SECONDS);
 
-    // Schedule background processing immediately (1 second delay)
+    // Schedule background processing (1 second delay)
     wp_schedule_single_event(time() + 1, 'fml_process_checkout_session_async', [$session_id]);
 
-    // Trigger cron immediately to process without waiting for page visit
+    // Try to trigger cron immediately
     spawn_cron();
 
     error_log("Checkout session {$session_id} queued for background processing");
+    error_log("Note: If cron doesn't run, the success page redirect will process the checkout");
 
     // Track webhook as processing
     if (function_exists('fml_track_webhook_event')) {
@@ -584,7 +788,7 @@ function fml_generate_non_exclusive_license_pdf($song_id, $song_name, $artist_na
     $mpdf->Output($tmpPath, 'F');
 
     // Upload to AWS
-    require get_stylesheet_directory() . "/php/aws/aws-autoloader.php";
+    require_once get_stylesheet_directory() . "/php/aws/aws-autoloader.php";
     $client = new Aws\S3\S3Client([
         'version' => '2006-03-01',
         'region' => FML_AWS_REGION,
@@ -678,6 +882,8 @@ function fml_create_stripe_checkout(WP_REST_Request $request) {
 
     // Get license price (could be per-song pricing in future)
     $license_price = get_option('fml_non_exclusive_license_price', 4900); // Default $49.00 in cents
+    $current_user = wp_get_current_user();
+    $description = "Sync.Land - Music license for {$artist_name} - {$song_name}";
 
     // Build checkout session
     $checkout_data = [
@@ -697,15 +903,19 @@ function fml_create_stripe_checkout(WP_REST_Request $request) {
         ],
         'success_url' => home_url("/account/licenses/?payment=success&song={$song_id}"),
         'cancel_url' => home_url("/song/{$song_id}/?payment=cancelled"),
+        'payment_intent_data' => [
+            'description' => $description,
+            'statement_descriptor_suffix' => 'SYNC'
+        ],
         'metadata' => [
             'type' => 'non_exclusive_license',
             'song_id' => $song_id,
             'user_id' => get_current_user_id(),
-            'licensee_name' => $licensee_name ?: wp_get_current_user()->display_name,
+            'licensee_name' => $licensee_name ?: $current_user->display_name,
             'project_name' => $project_name,
             'usage_description' => $usage_description
         ],
-        'customer_email' => wp_get_current_user()->user_email
+        'customer_email' => $current_user->user_email
     ];
 
     // Make Stripe API request
@@ -1112,9 +1322,12 @@ function fml_licensing_settings_page() {
                         <input type="text" name="fml_nmkr_preprod_project_uid" id="fml_nmkr_preprod_project_uid"
                                class="regular-text" placeholder="Project UID from NMKR Studio"
                                value="<?php echo esc_attr($nmkr_preprod_project_uid); ?>">
+                        <button type="button" class="button fml-load-projects" data-env="preprod">Load Projects</button>
+                        <div id="fml-preprod-projects-list" style="margin-top: 10px; display: none;"></div>
                         <?php if (!empty($nmkr_preprod_project_uid)): ?>
                             <p class="description" style="color: green;">&#10003; Saved</p>
                         <?php endif; ?>
+                        <p class="description">Click "Load Projects" to see available projects in your NMKR account</p>
                     </td>
                 </tr>
                 <tr>
@@ -1159,9 +1372,12 @@ function fml_licensing_settings_page() {
                         <input type="text" name="fml_nmkr_mainnet_project_uid" id="fml_nmkr_mainnet_project_uid"
                                class="regular-text" placeholder="Project UID from NMKR Studio"
                                value="<?php echo esc_attr($nmkr_mainnet_project_uid); ?>">
+                        <button type="button" class="button fml-load-projects" data-env="mainnet">Load Projects</button>
+                        <div id="fml-mainnet-projects-list" style="margin-top: 10px; display: none;"></div>
                         <?php if (!empty($nmkr_mainnet_project_uid)): ?>
                             <p class="description" style="color: green;">&#10003; Saved</p>
                         <?php endif; ?>
+                        <p class="description">Click "Load Projects" to see available projects in your NMKR account</p>
                     </td>
                 </tr>
                 <tr>
@@ -1443,6 +1659,69 @@ function fml_licensing_settings_page() {
                 $status.removeClass('success loading').css('color', '#d9534f').text('✗ Connection failed');
             });
         });
+
+        // Load NMKR projects
+        $('.fml-load-projects').on('click', function() {
+            var env = $(this).data('env');
+            var $btn = $(this);
+            var $list = $('#fml-' + env + '-projects-list');
+            var apiKey = $('#fml_nmkr_' + env + '_api_key').val();
+
+            if (!apiKey) {
+                alert('Please enter the ' + env + ' API key first');
+                return;
+            }
+
+            $btn.prop('disabled', true).text('Loading...');
+            $list.html('<p>Loading projects...</p>').show();
+
+            $.post(ajaxurl, {
+                action: 'fml_load_nmkr_projects',
+                nonce: '<?php echo wp_create_nonce('fml_licensing_settings'); ?>',
+                env: env,
+                api_key: apiKey
+            }, function(response) {
+                $btn.prop('disabled', false).text('Load Projects');
+                if (response.success && response.data.projects) {
+                    var html = '<p><strong>Select a project:</strong></p>';
+                    html += '<select id="fml-' + env + '-project-select" style="min-width: 300px;">';
+                    html += '<option value="">-- Select a project --</option>';
+                    response.data.projects.forEach(function(proj) {
+                        var label = proj.projectname || 'Unnamed';
+                        var uid = proj.uid || '';
+                        var policyId = proj.policyId || '';
+                        html += '<option value="' + uid + '" data-policy="' + policyId + '">' + label + ' (' + uid.substring(0, 8) + '...)</option>';
+                    });
+                    html += '</select>';
+                    html += ' <button type="button" class="button fml-use-project" data-env="' + env + '">Use Selected</button>';
+                    $list.html(html);
+                } else {
+                    $list.html('<p style="color: #d9534f;">Error: ' + (response.data ? response.data.error : 'Unknown error') + '</p>');
+                }
+            }).fail(function() {
+                $btn.prop('disabled', false).text('Load Projects');
+                $list.html('<p style="color: #d9534f;">Connection failed</p>');
+            });
+        });
+
+        // Use selected project
+        $(document).on('click', '.fml-use-project', function() {
+            var env = $(this).data('env');
+            var $select = $('#fml-' + env + '-project-select');
+            var uid = $select.val();
+            var policyId = $select.find(':selected').data('policy');
+
+            if (!uid) {
+                alert('Please select a project first');
+                return;
+            }
+
+            $('#fml_nmkr_' + env + '_project_uid').val(uid);
+            if (policyId) {
+                $('#fml_nmkr_' + env + '_policy_id').val(policyId);
+            }
+            $('#fml-' + env + '-projects-list').html('<p style="color: #5cb85c;">✓ Project UID and Policy ID filled in. Don\'t forget to save!</p>');
+        });
     });
     </script>
     <?php
@@ -1540,20 +1819,42 @@ function fml_create_cart_stripe_checkout($summary, $licensee_name, $project_name
         ];
     }
 
-    // Build checkout session with cart metadata
-    // Stripe metadata has limits, so we store cart items as JSON
+    // Build description for Stripe dashboard
+    $item_count = count($summary['items']);
+    $description = "Sync.Land - {$item_count} music license" . ($item_count > 1 ? 's' : '');
+    if (!empty($licensee_name)) {
+        $description .= " for {$licensee_name}";
+    }
+
+    // Generate a unique checkout key for transient storage
+    // Stripe metadata has a 500 char limit per value, so we store cart data in a transient
+    $checkout_key = 'fml_cart_' . wp_generate_password(16, false);
+
+    // Store cart items in transient BEFORE creating checkout session
+    set_transient($checkout_key, [
+        'cart_items' => $cart_items_meta,
+        'licensee_name' => $licensee_name ?: $user->display_name,
+        'project_name' => $project_name,
+        'usage_description' => $usage_description,
+        'user_id' => $user_id
+    ], HOUR_IN_SECONDS);
+
+    // Build checkout session - only pass reference key, not full cart data
     $checkout_data = [
         'mode' => 'payment',
         'line_items' => $line_items,
         'success_url' => home_url("/account/licenses/?payment=success&session_id={CHECKOUT_SESSION_ID}"),
         'cancel_url' => home_url("/cart/?payment=cancelled"),
+        'payment_intent_data' => [
+            'description' => $description,
+            'statement_descriptor_suffix' => 'SYNC'
+        ],
         'metadata' => [
             'type' => 'cart_checkout',
             'user_id' => $user_id,
+            'checkout_key' => $checkout_key,
             'licensee_name' => substr($licensee_name ?: $user->display_name, 0, 500),
-            'project_name' => substr($project_name, 0, 500),
-            'usage_description' => substr($usage_description, 0, 500),
-            'cart_items' => json_encode($cart_items_meta) // Store as JSON string
+            'project_name' => substr($project_name, 0, 500)
         ],
         'customer_email' => $user->user_email
     ];
@@ -1570,6 +1871,7 @@ function fml_create_cart_stripe_checkout($summary, $licensee_name, $project_name
 
     if (is_wp_error($response)) {
         error_log('Stripe API error: ' . $response->get_error_message());
+        delete_transient($checkout_key);
         return [
             'success' => false,
             'error' => 'Payment service unavailable'
@@ -1580,20 +1882,12 @@ function fml_create_cart_stripe_checkout($summary, $licensee_name, $project_name
 
     if (isset($body['error'])) {
         error_log('Stripe error: ' . json_encode($body['error']));
+        delete_transient($checkout_key);
         return [
             'success' => false,
             'error' => $body['error']['message'] ?? 'Payment error'
         ];
     }
-
-    // Store cart items in transient for webhook (backup for metadata size limits)
-    set_transient('fml_checkout_' . $body['id'], [
-        'cart_items' => $cart_items_meta,
-        'licensee_name' => $licensee_name ?: $user->display_name,
-        'project_name' => $project_name,
-        'usage_description' => $usage_description,
-        'user_id' => $user_id
-    ], HOUR_IN_SECONDS);
 
     return [
         'success' => true,
@@ -1607,135 +1901,196 @@ function fml_create_cart_stripe_checkout($summary, $licensee_name, $project_name
  * Handle cart checkout completion - Process multiple licenses
  */
 function fml_handle_cart_checkout_completed($session) {
+    error_log("=== fml_handle_cart_checkout_completed START ===");
+    error_log("Session ID: " . ($session['id'] ?? 'unknown'));
+
     $metadata = $session['metadata'] ?? [];
+    error_log("Metadata received: " . json_encode($metadata));
 
     // Check if this is a cart checkout
     if (!isset($metadata['type']) || $metadata['type'] !== 'cart_checkout') {
+        error_log("Not a cart checkout (type: " . ($metadata['type'] ?? 'not set') . "), skipping");
         return;
     }
 
     $user_id = intval($metadata['user_id'] ?? 0);
     $licensee_name = $metadata['licensee_name'] ?? '';
     $project_name = $metadata['project_name'] ?? '';
-    $usage_description = $metadata['usage_description'] ?? '';
+    $usage_description = '';
 
-    // Get cart items from metadata or transient backup
+    // Get cart items from transient using checkout_key (primary method)
     $cart_items = [];
-    if (!empty($metadata['cart_items'])) {
-        $cart_items = json_decode($metadata['cart_items'], true);
-    }
+    $checkout_key = $metadata['checkout_key'] ?? '';
+    error_log("Looking for checkout_key: '{$checkout_key}'");
 
-    // Fallback to transient if metadata parsing fails
-    if (empty($cart_items)) {
-        $transient_data = get_transient('fml_checkout_' . $session['id']);
+    if (!empty($checkout_key)) {
+        $transient_data = get_transient($checkout_key);
+        error_log("Transient data for {$checkout_key}: " . ($transient_data ? json_encode($transient_data) : 'NULL/FALSE'));
+
         if ($transient_data) {
             $cart_items = $transient_data['cart_items'] ?? [];
             $licensee_name = $licensee_name ?: ($transient_data['licensee_name'] ?? '');
             $project_name = $project_name ?: ($transient_data['project_name'] ?? '');
-            $usage_description = $usage_description ?: ($transient_data['usage_description'] ?? '');
+            $usage_description = $transient_data['usage_description'] ?? '';
             $user_id = $user_id ?: ($transient_data['user_id'] ?? 0);
+
+            error_log("Cart checkout: Retrieved " . count($cart_items) . " items from transient {$checkout_key}");
+        } else {
+            error_log("Cart checkout: Transient {$checkout_key} not found or expired");
+        }
+    } else {
+        error_log("No checkout_key in metadata");
+    }
+
+    // Fallback to legacy methods if checkout_key method fails
+    if (empty($cart_items)) {
+        error_log("Trying legacy methods to find cart_items...");
+
+        // Try cart_items from metadata (legacy)
+        if (!empty($metadata['cart_items'])) {
+            $cart_items = json_decode($metadata['cart_items'], true);
+            error_log("Found cart_items in metadata: " . json_encode($cart_items));
+        }
+
+        // Fallback to old transient format
+        if (empty($cart_items)) {
+            $legacy_key = 'fml_checkout_' . $session['id'];
+            $transient_data = get_transient($legacy_key);
+            error_log("Checking legacy transient {$legacy_key}: " . ($transient_data ? 'found' : 'not found'));
+
+            if ($transient_data) {
+                $cart_items = $transient_data['cart_items'] ?? [];
+                $licensee_name = $licensee_name ?: ($transient_data['licensee_name'] ?? '');
+                $project_name = $project_name ?: ($transient_data['project_name'] ?? '');
+                $usage_description = $usage_description ?: ($transient_data['usage_description'] ?? '');
+                $user_id = $user_id ?: ($transient_data['user_id'] ?? 0);
+            }
         }
     }
 
+    error_log("Final cart_items count: " . count($cart_items) . ", user_id: {$user_id}");
+
     if (empty($cart_items) || $user_id <= 0) {
-        error_log("Cart checkout completed but missing cart_items or user_id. Session: " . $session['id']);
+        error_log("FAILED: Cart checkout completed but missing cart_items or user_id. Session: " . $session['id'] . ", checkout_key: " . $checkout_key);
         return;
     }
 
+    error_log("Processing " . count($cart_items) . " cart items for user {$user_id}");
+
     $licenses_created = [];
 
-    foreach ($cart_items as $item) {
-        $song_id = intval($item['song_id'] ?? 0);
-        $license_type = $item['license_type'] ?? 'cc_by';
-        $include_nft = !empty($item['include_nft']) && $item['include_nft'] !== '0';
-        $wallet_address = $item['wallet_address'] ?? '';
+    foreach ($cart_items as $index => $item) {
+        error_log("--- Processing cart item {$index} ---");
+        error_log("Item data: " . json_encode($item));
 
-        if ($song_id <= 0) {
-            continue;
-        }
+        try {
+            $song_id = intval($item['song_id'] ?? 0);
+            $license_type = $item['license_type'] ?? 'cc_by';
+            $include_nft = !empty($item['include_nft']) && $item['include_nft'] !== '0';
+            $wallet_address = $item['wallet_address'] ?? '';
 
-        // Get song and artist info
-        $song_pod = pods('song', $song_id);
-        if (!$song_pod || !$song_pod->exists()) {
-            error_log("Cart checkout: Song {$song_id} not found");
-            continue;
-        }
+            error_log("Song ID: {$song_id}, License Type: {$license_type}, Include NFT: " . ($include_nft ? 'yes' : 'no'));
 
-        $song_name = $song_pod->field('post_title');
-        $artist_data = $song_pod->field('artist');
-        $artist_name = 'Unknown Artist';
-        if (!empty($artist_data)) {
-            $artist_id = is_array($artist_data) ? $artist_data['ID'] : $artist_data;
-            $artist_pod = pods('artist', $artist_id);
-            if ($artist_pod && $artist_pod->exists()) {
-                $artist_name = $artist_pod->field('post_title');
+            if ($song_id <= 0) {
+                error_log("Skipping item - invalid song_id");
+                continue;
             }
-        }
 
-        // Generate appropriate license PDF
-        if ($license_type === 'non_exclusive') {
-            // Commercial license
-            $license_price = intval(get_option('fml_non_exclusive_license_price', 4900));
-            $license_result = fml_generate_non_exclusive_license_pdf(
-                $song_id,
-                $song_name,
-                $artist_name,
-                $licensee_name,
-                $project_name,
-                $usage_description,
-                $license_price / 100,
-                'usd'
-            );
-        } else {
-            // CC-BY license
-            $license_result = fml_generate_ccby_license_pdf(
-                $song_id,
-                $song_name,
-                $artist_name,
-                $licensee_name,
-                $project_name
-            );
-        }
+            // Get song and artist info
+            $song_pod = pods('song', $song_id);
+            if (!$song_pod || !$song_pod->exists()) {
+                error_log("Cart checkout: Song {$song_id} not found in Pods");
+                continue;
+            }
 
-        if (!$license_result['success']) {
-            error_log("Failed to generate license PDF for song {$song_id}: " . ($license_result['error'] ?? 'Unknown error'));
-            continue;
-        }
+            $song_name = $song_pod->field('post_title');
+            $artist_data = $song_pod->field('artist');
+            $artist_name = 'Unknown Artist';
+            if (!empty($artist_data)) {
+                $artist_id = is_array($artist_data) ? $artist_data['ID'] : $artist_data;
+                $artist_pod = pods('artist', $artist_id);
+                if ($artist_pod && $artist_pod->exists()) {
+                    $artist_name = $artist_pod->field('post_title');
+                }
+            }
 
-        // Create license record
-        $pod = pods('license');
-        $license_data = [
-            'user' => $user_id,
-            'song' => $song_id,
-            'datetime' => current_time('mysql'),
-            'license_url' => $license_result['url'],
-            'licensor' => $licensee_name,
-            'project' => $project_name,
-            'description_of_usage' => $usage_description,
-            'legal_name' => $licensee_name,
-            'license_type' => $license_type,
-            'stripe_payment_id' => $session['payment_intent'] ?? $session['id'],
-            'stripe_payment_status' => 'completed'
-        ];
+            error_log("Song: {$song_name}, Artist: {$artist_name}");
 
-        // Add payment amount for commercial licenses
-        if ($license_type === 'non_exclusive') {
-            $license_data['payment_amount'] = intval(get_option('fml_non_exclusive_license_price', 4900));
-            $license_data['payment_currency'] = 'usd';
-        }
+            // Generate appropriate license PDF
+            error_log("Generating {$license_type} license PDF...");
 
-        // Add NFT fields if NFT was selected
-        if ($include_nft) {
-            $license_data['nft_status'] = 'pending';
-            $license_data['wallet_address'] = $wallet_address;
-        }
+            if ($license_type === 'non_exclusive') {
+                // Commercial license
+                $license_price = intval(get_option('fml_non_exclusive_license_price', 4900));
+                $license_result = fml_generate_non_exclusive_license_pdf(
+                    $song_id,
+                    $song_name,
+                    $artist_name,
+                    $licensee_name,
+                    $project_name,
+                    $usage_description,
+                    $license_price / 100,
+                    'usd'
+                );
+            } else {
+                // CC-BY license
+                if (!function_exists('fml_generate_ccby_license_pdf')) {
+                    error_log("FATAL: fml_generate_ccby_license_pdf function not found!");
+                    continue;
+                }
+                $license_result = fml_generate_ccby_license_pdf(
+                    $song_id,
+                    $song_name,
+                    $artist_name,
+                    $licensee_name,
+                    $project_name
+                );
+            }
 
-        $new_license_id = $pod->add($license_data);
+            error_log("PDF generation result: " . json_encode($license_result));
 
-        if ($new_license_id) {
-            wp_update_post([
-                'ID' => $new_license_id,
-                'post_status' => 'publish'
+            if (!$license_result['success']) {
+                error_log("Failed to generate license PDF for song {$song_id}: " . ($license_result['error'] ?? 'Unknown error'));
+                continue;
+            }
+
+            // Create license record
+            error_log("Creating license record in Pods...");
+            $pod = pods('license');
+            $license_data = [
+                'user' => $user_id,
+                'song' => $song_id,
+                'datetime' => current_time('mysql'),
+                'license_url' => $license_result['url'],
+                'licensor' => $licensee_name,
+                'project' => $project_name,
+                'description_of_usage' => $usage_description,
+                'legal_name' => $licensee_name,
+                'license_type' => $license_type,
+                'stripe_payment_id' => $session['payment_intent'] ?? $session['id'],
+                'stripe_payment_status' => 'completed'
+            ];
+
+            // Add payment amount for commercial licenses
+            if ($license_type === 'non_exclusive') {
+                $license_data['payment_amount'] = intval(get_option('fml_non_exclusive_license_price', 4900));
+                $license_data['payment_currency'] = 'usd';
+            }
+
+            // Add NFT fields if NFT was selected
+            if ($include_nft) {
+                $license_data['nft_status'] = 'pending';
+                $license_data['wallet_address'] = $wallet_address;
+            }
+
+            error_log("License data: " . json_encode($license_data));
+            $new_license_id = $pod->add($license_data);
+            error_log("Pods add() returned: " . ($new_license_id ? $new_license_id : 'FALSE/0'));
+
+            if ($new_license_id) {
+                wp_update_post([
+                    'ID' => $new_license_id,
+                    'post_status' => 'publish'
             ]);
 
             $licenses_created[] = [
@@ -1760,16 +2115,31 @@ function fml_handle_cart_checkout_completed($session) {
             if ($include_nft && !empty($wallet_address)) {
                 fml_queue_license_nft_minting($new_license_id, $wallet_address);
             }
+        } else {
+            error_log("Failed to create license record in Pods for song {$song_id}");
+        }
+
+        } catch (Exception $e) {
+            error_log("EXCEPTION processing cart item {$index}: " . $e->getMessage());
+            error_log("Exception trace: " . $e->getTraceAsString());
+        } catch (Error $e) {
+            error_log("ERROR processing cart item {$index}: " . $e->getMessage());
+            error_log("Error trace: " . $e->getTraceAsString());
         }
     }
+
+    error_log("=== Cart checkout complete. Licenses created: " . count($licenses_created) . " ===");
 
     // Clear user's cart after successful checkout
     if ($user_id) {
         delete_user_meta($user_id, 'fml_cart');
     }
 
-    // Clean up transient
-    delete_transient('fml_checkout_' . $session['id']);
+    // Clean up transients
+    if (!empty($checkout_key)) {
+        delete_transient($checkout_key);
+    }
+    delete_transient('fml_checkout_' . $session['id']); // Legacy cleanup
 
     // Send email notification
     $user = get_user_by('id', $user_id);

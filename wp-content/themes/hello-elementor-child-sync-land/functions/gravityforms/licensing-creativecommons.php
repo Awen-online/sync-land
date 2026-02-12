@@ -213,7 +213,7 @@ function PDF_license_generator($songID, $licensor, $projectname, $date, $descrip
 
     // Upload to AWS
     // Credentials are loaded from wp-config.php constants
-    require get_stylesheet_directory() . "/php/aws/aws-autoloader.php";
+    require_once get_stylesheet_directory() . "/php/aws/aws-autoloader.php";
     $client = new Aws\S3\S3Client([
         'version'     => '2006-03-01',
         'region'      => FML_AWS_REGION,

@@ -106,9 +106,14 @@ function fml_cart_shortcode($atts) {
                                        <?php checked($item['include_nft']); ?>>
                                 <span class="fml-nft-label">
                                     Add NFT Verification (+$<?php echo number_format($nft_fee / 100, 2); ?>)
-                                    <i class="fas fa-info-circle" title="Mint your license as an NFT on Cardano blockchain for permanent verification"></i>
+                                    <span class="fml-powered-by-cardano">
+                                        Powered by <img src="<?php echo get_stylesheet_directory_uri(); ?>/assets/images/cardano-logo.svg" alt="Cardano" class="fml-cardano-logo">
+                                    </span>
                                 </span>
                             </label>
+                            <span class="fml-info-tooltip" data-tooltip="Mint your license as an NFT on Cardano blockchain for permanent verification">
+                                <i class="fas fa-info-circle"></i>
+                            </span>
 
                             <!-- Wallet Address Input (shown when NFT selected) -->
                             <div class="fml-wallet-input <?php echo $item['include_nft'] ? '' : 'hidden'; ?>">
@@ -328,9 +333,14 @@ function fml_add_to_cart_shortcode($atts) {
                     <span class="fml-checkbox-label">
                         <strong>Add NFT Verification</strong>
                         <span class="fml-price">+$<?php echo number_format($nft_fee / 100, 2); ?></span>
-                        <i class="fas fa-info-circle fml-tooltip" title="Mint your license as an NFT on the Cardano blockchain for permanent, verifiable proof of licensing"></i>
+                        <span class="fml-powered-by-cardano">
+                            Powered by <img src="<?php echo get_stylesheet_directory_uri(); ?>/assets/images/cardano-logo.svg" alt="Cardano" class="fml-cardano-logo">
+                        </span>
                     </span>
                 </label>
+                <span class="fml-info-tooltip" data-tooltip="Mint your license as an NFT on the Cardano blockchain for permanent, verifiable proof of licensing">
+                    <i class="fas fa-info-circle"></i>
+                </span>
 
                 <div class="fml-wallet-input-add hidden" data-nmkr-mode="<?php echo esc_attr($nmkr_mode); ?>">
                     <label class="fml-wallet-label">Cardano Wallet Address <span class="required">*</span></label>
@@ -438,6 +448,9 @@ function fml_license_options_shortcode($atts) {
                         <i class="fas fa-certificate"></i>
                         Add NFT Verification
                         <span class="fml-addon-price">+$<?php echo number_format($nft_fee / 100, 2); ?></span>
+                        <span class="fml-powered-by-cardano">
+                            Powered by <img src="<?php echo get_stylesheet_directory_uri(); ?>/assets/images/cardano-logo.svg" alt="Cardano" class="fml-cardano-logo">
+                        </span>
                     </span>
                 </label>
             </div>

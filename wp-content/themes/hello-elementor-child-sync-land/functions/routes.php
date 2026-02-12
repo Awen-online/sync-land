@@ -92,7 +92,7 @@ function PDF_license_generator($songID){
 
         /* AMAZON WEB SERVICES CONFIGURATION */
         // Credentials are loaded from wp-config.php constants
-        require get_stylesheet_directory()."/php/aws/aws-autoloader.php";
+        require_once get_stylesheet_directory()."/php/aws/aws-autoloader.php";
 
         // Establish connection with DreamObjects with an S3 client.
         $client = new Aws\S3\S3Client([
@@ -187,7 +187,7 @@ header("Content-Type: application/json; charset=utf-8");
 
 /* AMAZON WEB SERVICES CONFIGURATION */
 // Credentials are loaded from wp-config.php constants
-require get_stylesheet_directory()."/php/aws/aws-autoloader.php";
+require_once get_stylesheet_directory()."/php/aws/aws-autoloader.php";
 
 // Establish connection with DreamObjects with an S3 client.
 $client = new Aws\S3\S3Client([

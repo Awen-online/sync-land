@@ -242,10 +242,17 @@
 }
 
 .fml-nft-toggle {
-    display: flex;
+    display: inline-flex;
     align-items: center;
     gap: 10px;
     cursor: pointer;
+}
+
+.fml-cart-item-nft {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
 }
 
 .fml-nft-checkbox {
@@ -264,6 +271,90 @@
     color: var(--fml-info);
     cursor: help;
     margin-left: 5px;
+}
+
+/* Powered by Cardano branding */
+.fml-powered-by-cardano {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.65rem;
+    color: var(--fml-text-muted);
+    margin-top: 6px;
+    width: 100%;
+    transition: opacity 0.2s;
+}
+
+.fml-powered-by-cardano:hover {
+    opacity: 0.8;
+}
+
+.fml-cardano-logo {
+    width: 100px;
+    height: auto;
+    vertical-align: middle;
+    filter: brightness(0) invert(1);
+    transition: filter 0.2s;
+}
+
+.fml-powered-by-cardano:hover .fml-cardano-logo {
+    filter: none;
+}
+
+/* Info icon tooltip - show on hover */
+.fml-info-tooltip {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    color: var(--fml-info);
+    cursor: help;
+    margin-left: 5px;
+}
+
+.fml-info-tooltip::before {
+    content: attr(data-tooltip);
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 8px 12px;
+    background: var(--fml-darker);
+    color: var(--fml-text);
+    font-size: 0.75rem;
+    font-weight: normal;
+    white-space: normal;
+    width: 220px;
+    text-align: center;
+    border-radius: 6px;
+    border: 1px solid var(--fml-border);
+    box-shadow: var(--fml-shadow);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s, visibility 0.2s;
+    z-index: 1000;
+    pointer-events: none;
+}
+
+.fml-info-tooltip::after {
+    content: '';
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 6px solid transparent;
+    border-top-color: var(--fml-darker);
+    margin-bottom: -12px;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s, visibility 0.2s;
+    z-index: 1001;
+    pointer-events: none;
+}
+
+.fml-info-tooltip:hover::before,
+.fml-info-tooltip:hover::after {
+    opacity: 1;
+    visibility: visible;
 }
 
 /* Wallet Input */
@@ -309,17 +400,42 @@
 }
 
 .fml-wallet-validation {
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 6px;
     font-size: 0.8rem;
     margin-top: 5px;
+    background: transparent;
 }
 
 .fml-wallet-validation.success {
     color: var(--fml-success);
 }
 
+.fml-wallet-validation.success::before {
+    content: '\f00c';
+    font-family: 'Font Awesome 5 Free';
+    font-weight: 900;
+}
+
 .fml-wallet-validation.error {
     color: var(--fml-error);
+}
+
+.fml-wallet-validation.error::before {
+    content: '\f00d';
+    font-family: 'Font Awesome 5 Free';
+    font-weight: 900;
+}
+
+.fml-wallet-validation.warning {
+    color: var(--fml-warning);
+}
+
+.fml-wallet-validation.warning::before {
+    content: '\f071';
+    font-family: 'Font Awesome 5 Free';
+    font-weight: 900;
 }
 
 /* Item Price */
@@ -645,6 +761,14 @@
     border-radius: 8px;
 }
 
+.fml-nft-option > .fml-checkbox-option {
+    display: inline-flex;
+}
+
+.fml-nft-option > .fml-info-tooltip {
+    margin-left: 8px;
+}
+
 .fml-checkbox-option {
     display: flex;
     align-items: center;
@@ -759,22 +883,43 @@
 
 /* Validation Message */
 .fml-wallet-validation-msg {
-    display: block;
+    display: flex;
+    align-items: center;
+    gap: 6px;
     font-size: 0.8rem;
     margin-top: 6px;
     min-height: 1.2em;
+    background: transparent;
 }
 
 .fml-wallet-validation-msg.success {
     color: var(--fml-success);
 }
 
+.fml-wallet-validation-msg.success::before {
+    content: '\f00c';
+    font-family: 'Font Awesome 5 Free';
+    font-weight: 900;
+}
+
 .fml-wallet-validation-msg.error {
     color: var(--fml-error);
 }
 
+.fml-wallet-validation-msg.error::before {
+    content: '\f00d';
+    font-family: 'Font Awesome 5 Free';
+    font-weight: 900;
+}
+
 .fml-wallet-validation-msg.warning {
     color: var(--fml-warning);
+}
+
+.fml-wallet-validation-msg.warning::before {
+    content: '\f071';
+    font-family: 'Font Awesome 5 Free';
+    font-weight: 900;
 }
 
 /* Wallet Hint */

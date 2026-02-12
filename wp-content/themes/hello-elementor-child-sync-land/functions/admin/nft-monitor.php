@@ -236,7 +236,27 @@ function fml_nft_monitor_page() {
             case 'clear_logs':
                 $log_type = sanitize_text_field($_POST['log_type'] ?? '');
                 fml_clear_logs($log_type ?: null);
+                // Also clear the PHP error log
+                $error_log_path = WP_CONTENT_DIR . '/../../logs/php/error.log';
+                if (file_exists($error_log_path) && is_writable($error_log_path)) {
+                    file_put_contents($error_log_path, '');
+                }
                 echo '<div class="notice notice-success"><p>Logs cleared.</p></div>';
+                break;
+
+            case 'clear_all':
+                // Clear NFT queue
+                update_option('fml_nft_queue', []);
+                // Clear event logs
+                update_option('fml_event_logs', []);
+                // Clear webhook events
+                update_option('fml_webhook_events', []);
+                // Clear PHP error log
+                $error_log_path = WP_CONTENT_DIR . '/../../logs/php/error.log';
+                if (file_exists($error_log_path) && is_writable($error_log_path)) {
+                    file_put_contents($error_log_path, '');
+                }
+                echo '<div class="notice notice-success"><p>All logs and queues cleared.</p></div>';
                 break;
 
             case 'retry_nft':
@@ -289,9 +309,23 @@ function fml_nft_monitor_page() {
                 echo '<div class="notice notice-success"><p>Queue cleaned up.</p></div>';
                 break;
 
+            case 'clear_queue':
+                update_option('fml_nft_queue', []);
+                echo '<div class="notice notice-success"><p>NFT queue cleared.</p></div>';
+                break;
+
             case 'process_queue':
                 fml_process_nft_queue_manually();
                 echo '<div class="notice notice-success"><p>Queue processing triggered.</p></div>';
+                break;
+
+            case 'poll_nmkr':
+                if (function_exists('fml_check_processing_nfts')) {
+                    fml_check_processing_nfts();
+                    echo '<div class="notice notice-success"><p>NMKR status polling completed. Check Activity Logs for details.</p></div>';
+                } else {
+                    echo '<div class="notice notice-error"><p>NMKR polling function not available.</p></div>';
+                }
                 break;
 
             case 'run_cron':
@@ -306,6 +340,14 @@ function fml_nft_monitor_page() {
                     do_action_ref_array($hook, $args ?: []);
                     echo '<div class="notice notice-success"><p>Executed: ' . esc_html($hook) . '</p></div>';
                 }
+                break;
+
+            case 'clear_cron_lock':
+                // Clear the doing_cron transient that can get stuck
+                delete_transient('doing_cron');
+                // Also clear any wp_cron_lock
+                delete_option('doing_cron');
+                echo '<div class="notice notice-success"><p>Cron lock cleared. Cron jobs should now be able to run.</p></div>';
                 break;
         }
     }
@@ -366,11 +408,12 @@ function fml_nft_monitor_page() {
                 font-size: 36px;
                 font-weight: bold;
                 color: #333;
+                background: transparent !important;
             }
-            .fml-stat-card .number.success { color: #46b450; }
-            .fml-stat-card .number.warning { color: #ffb900; }
-            .fml-stat-card .number.error { color: #dc3232; }
-            .fml-stat-card .number.info { color: #0073aa; }
+            .fml-stat-card .number.success { color: #46b450; background: transparent !important; }
+            .fml-stat-card .number.warning { color: #ffb900; background: transparent !important; }
+            .fml-stat-card .number.error { color: #dc3232; background: transparent !important; }
+            .fml-stat-card .number.info { color: #0073aa; background: transparent !important; }
 
             .fml-tabs {
                 margin-top: 20px;
@@ -464,7 +507,7 @@ function fml_nft_monitor_page() {
         </style>
 
         <!-- Current Mode Indicators -->
-        <div style="margin-bottom: 20px;">
+        <div style="margin-bottom: 20px; display: flex; align-items: center; gap: 15px;">
             <?php
             $stripe_mode = function_exists('fml_get_stripe_mode') ? fml_get_stripe_mode() : 'test';
             $nmkr_mode = function_exists('fml_get_nmkr_mode') ? fml_get_nmkr_mode() : 'preprod';
@@ -475,33 +518,167 @@ function fml_nft_monitor_page() {
             <span class="fml-mode-indicator <?php echo $nmkr_mode === 'mainnet' ? 'live' : 'test'; ?>">
                 NMKR: <?php echo strtoupper($nmkr_mode); ?>
             </span>
+            <form method="post" style="margin-left: auto;">
+                <?php wp_nonce_field('fml_monitor_action'); ?>
+                <input type="hidden" name="fml_action" value="clear_all">
+                <button type="submit" class="button" onclick="return confirm('Clear all logs, queues, and error log?');">
+                    <span class="dashicons dashicons-trash" style="vertical-align: middle;"></span> Clear All Logs & Queue
+                </button>
+            </form>
+        </div>
+
+        <!-- NMKR Account Status -->
+        <?php
+        $coupon_balance = fml_get_nmkr_mint_coupon_balance();
+        $project_details = fml_get_nmkr_project_details();
+        $nmkr_mode = fml_get_nmkr_mode();
+
+        // Extract the actual balance number from the response
+        $balance_num = 0;
+        if ($coupon_balance['success']) {
+            $raw = $coupon_balance['raw'] ?? $coupon_balance['balance'];
+            if (is_array($raw)) {
+                $balance_num = $raw['mintCouponBalanceCardano'] ?? $raw['mintCoupons'] ?? $raw['balance'] ?? 0;
+            } else {
+                $balance_num = is_numeric($raw) ? $raw : 0;
+            }
+        }
+        $has_coupons = $balance_num > 0;
+
+        // Determine overall status
+        $has_issues = !$has_coupons || ($project_details['success'] && $project_details['policy_locked']);
+        ?>
+        <div style="background: <?php echo $has_issues ? '#f8d7da' : '#d4edda'; ?>; border: 1px solid <?php echo $has_issues ? '#f5c6cb' : '#c3e6cb'; ?>; border-radius: 4px; padding: 15px; margin-bottom: 20px;">
+            <strong style="display: block; margin-bottom: 10px;">
+                <span class="dashicons dashicons-admin-network"></span>
+                NMKR Account Status (<?php echo esc_html(ucfirst($nmkr_mode)); ?>)
+            </strong>
+
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                <!-- Mint Coupons -->
+                <div style="background: rgba(255,255,255,0.5); padding: 10px; border-radius: 4px;">
+                    <strong style="font-size: 12px; color: #666;">Mint Coupons</strong>
+                    <div style="font-size: 24px; font-weight: bold; color: <?php echo $has_coupons ? '#155724' : '#721c24'; ?>;">
+                        <?php echo $coupon_balance['success'] ? number_format($balance_num) : 'Error'; ?>
+                    </div>
+                    <?php if (!$has_coupons && $coupon_balance['success']): ?>
+                        <span style="color: #721c24; font-size: 11px;">No coupons! Cannot mint.</span>
+                    <?php endif; ?>
+                </div>
+
+                <!-- Project Info -->
+                <?php if ($project_details['success']): ?>
+                <div style="background: rgba(255,255,255,0.5); padding: 10px; border-radius: 4px;">
+                    <strong style="font-size: 12px; color: #666;">Project</strong>
+                    <div style="font-size: 14px; font-weight: bold;"><?php echo esc_html($project_details['project_name']); ?></div>
+                </div>
+
+                <!-- Policy Status -->
+                <div style="background: rgba(255,255,255,0.5); padding: 10px; border-radius: 4px;">
+                    <strong style="font-size: 12px; color: #666;">Policy Status</strong>
+                    <div style="font-size: 14px; font-weight: bold; color: <?php echo $project_details['policy_locked'] ? '#721c24' : '#155724'; ?>;">
+                        <?php if ($project_details['policy_locked']): ?>
+                            <span class="dashicons dashicons-lock" style="font-size: 14px;"></span> LOCKED
+                        <?php else: ?>
+                            <span class="dashicons dashicons-unlock" style="font-size: 14px;"></span> Open
+                        <?php endif; ?>
+                    </div>
+                    <?php if ($project_details['policy_lock_date']): ?>
+                        <span style="font-size: 11px; color: #666;">
+                            <?php echo $project_details['policy_locked'] ? 'Locked' : 'Locks'; ?>:
+                            <?php echo date('M j, Y', strtotime($project_details['policy_lock_date'])); ?>
+                        </span>
+                    <?php else: ?>
+                        <span style="font-size: 11px; color: #666;">No lock date</span>
+                    <?php endif; ?>
+                </div>
+
+                <!-- NFT Counts from Project -->
+                <div style="background: rgba(255,255,255,0.5); padding: 10px; border-radius: 4px;">
+                    <strong style="font-size: 12px; color: #666;">NMKR NFTs</strong>
+                    <div style="font-size: 11px;">
+                        <?php
+                        $counts = $project_details['nft_counts'];
+                        echo 'Free: ' . ($counts['free'] ?? 0) . ' | ';
+                        echo 'Reserved: ' . ($counts['reserved'] ?? 0) . ' | ';
+                        echo 'Sold: ' . ($counts['sold'] ?? 0);
+                        ?>
+                    </div>
+                </div>
+                <?php else: ?>
+                <div style="background: rgba(255,255,255,0.5); padding: 10px; border-radius: 4px; grid-column: span 3;">
+                    <strong style="font-size: 12px; color: #666;">Project Status</strong>
+                    <div style="font-size: 12px; color: #721c24; margin-bottom: 5px;">
+                        Error: <?php echo esc_html($project_details['error'] ?? 'Unknown'); ?>
+                    </div>
+                    <?php if (!empty($project_details['configured_uid'])): ?>
+                        <div style="font-size: 11px; color: #666;">
+                            Configured UID: <code><?php echo esc_html($project_details['configured_uid']); ?></code>
+                        </div>
+                    <?php endif; ?>
+                    <?php
+                    // List available projects to help fix the issue
+                    $projects_list = fml_list_nmkr_projects();
+                    if ($projects_list['success'] && !empty($projects_list['projects'])):
+                    ?>
+                        <div style="margin-top: 8px; font-size: 11px;">
+                            <strong>Available projects in your account:</strong>
+                            <ul style="margin: 5px 0 0 15px; padding: 0;">
+                                <?php foreach (array_slice($projects_list['projects'], 0, 5) as $proj): ?>
+                                    <li>
+                                        <strong><?php echo esc_html($proj['projectname'] ?? 'Unnamed'); ?></strong>
+                                        — UID: <code><?php echo esc_html($proj['uid'] ?? 'N/A'); ?></code>
+                                    </li>
+                                <?php endforeach; ?>
+                            </ul>
+                            <p style="margin: 5px 0 0; color: #856404;">
+                                Update the Project UID in <a href="<?php echo admin_url('options-general.php?page=fml-licensing'); ?>">Settings → Sync.Land Licensing</a>
+                            </p>
+                        </div>
+                    <?php endif; ?>
+                </div>
+                <?php endif; ?>
+            </div>
+
+            <?php if ($project_details['success'] && $project_details['policy_locked']): ?>
+                <p style="margin: 10px 0 0; color: #721c24; font-weight: bold;">
+                    <span class="dashicons dashicons-warning"></span>
+                    Policy is LOCKED! NFTs cannot be minted. Create a new project with an open policy.
+                </p>
+            <?php endif; ?>
+
+            <p style="margin: 10px 0 0; font-size: 12px; color: #666;">
+                <a href="https://studio<?php echo $nmkr_mode === 'preprod' ? '.preprod' : ''; ?>.nmkr.io" target="_blank">Open NMKR Studio →</a>
+            </p>
         </div>
 
         <!-- Stats Cards -->
         <div class="fml-monitor-grid">
             <div class="fml-stat-card">
                 <h3>Total Licenses</h3>
-                <div class="number info"><?php echo esc_html($license_stats['total']); ?></div>
+                <div class="number info"><?php echo intval($license_stats['total']); ?></div>
             </div>
             <div class="fml-stat-card">
                 <h3>NFT Verified</h3>
-                <div class="number success"><?php echo esc_html($license_stats['nft_minted']); ?></div>
+                <div class="number success"><?php echo intval($license_stats['nft_minted']); ?></div>
             </div>
             <div class="fml-stat-card">
                 <h3>NFT Pending</h3>
-                <div class="number warning"><?php echo esc_html($license_stats['nft_pending']); ?></div>
+                <div class="number warning"><?php echo intval($license_stats['nft_pending']); ?></div>
             </div>
             <div class="fml-stat-card">
                 <h3>NFT Failed</h3>
-                <div class="number error"><?php echo esc_html($license_stats['nft_failed']); ?></div>
+                <div class="number error"><?php echo intval($license_stats['nft_failed']); ?></div>
             </div>
             <div class="fml-stat-card">
                 <h3>Queue Size</h3>
                 <div class="number"><?php echo count(fml_get_nft_queue('pending')); ?></div>
             </div>
             <div class="fml-stat-card">
-                <h3>Scheduled Crons</h3>
-                <div class="number"><?php echo count($fml_crons); ?></div>
+                <h3>Mint Coupons</h3>
+                <div class="number <?php echo $has_coupons ? 'success' : 'error'; ?>">
+                    <?php echo $coupon_balance['success'] ? number_format($balance_num) : '!'; ?>
+                </div>
             </div>
         </div>
 
@@ -530,6 +707,19 @@ function fml_nft_monitor_page() {
                     <input type="hidden" name="fml_action" value="cleanup_queue">
                     <button type="submit" class="button">Clean Up Old Items</button>
                 </form>
+
+                <form method="post" style="display: inline; margin-left: 10px;">
+                    <?php wp_nonce_field('fml_monitor_action'); ?>
+                    <input type="hidden" name="fml_action" value="clear_queue">
+                    <button type="submit" class="button" onclick="return confirm('Clear entire NFT queue?');">Clear Queue</button>
+                </form>
+
+                <form method="post" style="display: inline; margin-left: 10px;">
+                    <?php wp_nonce_field('fml_monitor_action'); ?>
+                    <input type="hidden" name="fml_action" value="poll_nmkr">
+                    <button type="submit" class="button button-secondary">Poll NMKR Status</button>
+                </form>
+                <span class="description" style="margin-left: 10px;">Check NMKR for updates on "processing" NFTs</span>
 
                 <?php if (empty($nft_queue)): ?>
                     <p style="margin-top: 20px;"><em>No items in queue.</em></p>
@@ -682,15 +872,24 @@ function fml_nft_monitor_page() {
                     (<?php echo date('T'); ?>)
                 </p>
 
-                <form method="post" style="margin-bottom: 20px;">
+                <form method="post" style="margin-bottom: 20px; display: inline-block;">
                     <?php wp_nonce_field('fml_monitor_action'); ?>
                     <input type="hidden" name="fml_action" value="run_cron">
                     <button type="submit" class="button button-primary">
                         <span class="dashicons dashicons-controls-play" style="vertical-align: middle;"></span>
                         Run All Due Cron Jobs
                     </button>
-                    <span class="description" style="margin-left: 10px;">Manually execute all FML cron jobs that are ready to run</span>
                 </form>
+
+                <form method="post" style="margin-bottom: 20px; display: inline-block; margin-left: 10px;">
+                    <?php wp_nonce_field('fml_monitor_action'); ?>
+                    <input type="hidden" name="fml_action" value="clear_cron_lock">
+                    <button type="submit" class="button">
+                        <span class="dashicons dashicons-unlock" style="vertical-align: middle;"></span>
+                        Clear Cron Lock
+                    </button>
+                </form>
+                <br><span class="description">Manually execute cron jobs or clear a stuck cron lock</span>
 
                 <?php if (empty($fml_crons)): ?>
                     <p><em>No FML cron jobs scheduled.</em></p>
@@ -926,6 +1125,7 @@ function fml_get_license_stats() {
         'nft_minted' => 0,
         'nft_pending' => 0,
         'nft_failed' => 0,
+        'nft_processing' => 0,
         'cc_by' => 0,
         'non_exclusive' => 0
     ];
@@ -949,7 +1149,9 @@ function fml_get_license_stats() {
 
     foreach ($nft_statuses as $row) {
         if ($row->status === 'minted') $stats['nft_minted'] = intval($row->count);
-        if ($row->status === 'pending') $stats['nft_pending'] = intval($row->count);
+        if ($row->status === 'pending') $stats['nft_pending'] += intval($row->count);
+        if ($row->status === 'processing') $stats['nft_pending'] += intval($row->count); // Count processing as pending
+        if ($row->status === 'ipfs_pending') $stats['nft_pending'] += intval($row->count); // Count ipfs_pending as pending
         if ($row->status === 'failed') $stats['nft_failed'] = intval($row->count);
     }
 
@@ -1093,27 +1295,38 @@ function fml_run_pending_cron_jobs() {
  */
 function fml_check_cron_health() {
     $issues = [];
+    $info = [];
 
     // Check if cron is disabled
     if (defined('DISABLE_WP_CRON') && DISABLE_WP_CRON) {
         $issues[] = 'DISABLE_WP_CRON is set to true - WordPress cron will not run automatically';
     }
 
-    // Check if we can reach ourselves (loopback test)
-    $loopback_url = site_url('wp-cron.php');
-    $response = wp_remote_get($loopback_url, [
-        'timeout' => 5,
-        'sslverify' => false
-    ]);
-
-    if (is_wp_error($response)) {
-        $issues[] = 'Loopback request failed: ' . $response->get_error_message() . ' - Cron jobs may not fire automatically';
+    // Check if alternate cron is enabled (good for Local dev)
+    if (defined('ALTERNATE_WP_CRON') && ALTERNATE_WP_CRON) {
+        $info[] = 'ALTERNATE_WP_CRON is enabled - cron will run via page loads (good for local dev)';
     }
 
-    // Check for stuck cron
+    // Only test loopback if not using alternate cron
+    if (!defined('ALTERNATE_WP_CRON') || !ALTERNATE_WP_CRON) {
+        $loopback_url = site_url('wp-cron.php');
+        $response = wp_remote_get($loopback_url, [
+            'timeout' => 5,
+            'sslverify' => false
+        ]);
+
+        if (is_wp_error($response)) {
+            $issues[] = 'Loopback request failed: ' . $response->get_error_message() . ' - Consider enabling ALTERNATE_WP_CRON';
+        }
+    }
+
+    // Check for stuck cron (only flag if more than 5 minutes old)
     $doing_cron = get_transient('doing_cron');
-    if ($doing_cron && ($doing_cron > (time() - 60))) {
-        $issues[] = 'A cron process appears to be running (or stuck)';
+    if ($doing_cron) {
+        $cron_age = time() - $doing_cron;
+        if ($cron_age > 300) { // 5 minutes
+            $issues[] = 'A cron process appears to be stuck (started ' . human_time_diff($doing_cron, time()) . ' ago) - Use "Clear Cron Lock" to reset';
+        }
     }
 
     return $issues;

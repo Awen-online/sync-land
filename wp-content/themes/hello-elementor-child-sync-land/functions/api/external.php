@@ -114,6 +114,21 @@ add_action('rest_api_init', function() {
             ]
         ]
     ]);
+
+    // Get license modal content (add-to-cart HTML) for a song
+    register_rest_route('FML/v1', '/license-modal/(?P<id>\d+)', [
+        'methods' => 'GET',
+        'callback' => 'fml_get_license_modal_content',
+        'permission_callback' => '__return_true',
+        'args' => [
+            'id' => [
+                'required' => true,
+                'validate_callback' => function($param) {
+                    return is_numeric($param) && intval($param) > 0;
+                }
+            ]
+        ]
+    ]);
 });
 
 /**
@@ -167,18 +182,45 @@ function fml_get_random_song(WP_REST_Request $request) {
 }
 
 /**
- * Format a taxonomy term with name and permalink
+ * Format a related item (genre/mood CPT) with name and permalink
+ * Handles both Pods CPT relationships and WordPress taxonomy terms
  */
 function fml_format_taxonomy_term($term, $taxonomy) {
     $name = '';
+    $post_id = null;
     $term_id = null;
 
-    if (is_object($term) && isset($term->name)) {
-        $name = $term->name;
-        $term_id = isset($term->term_id) ? $term->term_id : null;
-    } elseif (is_array($term) && isset($term['name'])) {
-        $name = $term['name'];
-        $term_id = isset($term['term_id']) ? $term['term_id'] : null;
+    // Handle Pods relationship data (returns post object or array)
+    if (is_object($term)) {
+        // Pods relationship - post object
+        if (isset($term->ID)) {
+            $post_id = $term->ID;
+            $name = isset($term->post_title) ? $term->post_title : '';
+        }
+        // WordPress term object
+        elseif (isset($term->term_id)) {
+            $term_id = $term->term_id;
+            $name = isset($term->name) ? $term->name : '';
+        }
+        // Fallback to name property
+        elseif (isset($term->name)) {
+            $name = $term->name;
+        }
+    } elseif (is_array($term)) {
+        // Pods relationship - post array
+        if (isset($term['ID'])) {
+            $post_id = $term['ID'];
+            $name = isset($term['post_title']) ? $term['post_title'] : '';
+        }
+        // WordPress term array
+        elseif (isset($term['term_id'])) {
+            $term_id = $term['term_id'];
+            $name = isset($term['name']) ? $term['name'] : '';
+        }
+        // Fallback to name key
+        elseif (isset($term['name'])) {
+            $name = $term['name'];
+        }
     } elseif (is_string($term) && !empty($term)) {
         $name = $term;
     }
@@ -187,20 +229,34 @@ function fml_format_taxonomy_term($term, $taxonomy) {
         return null;
     }
 
-    // Try to get the permalink
+    // Get the permalink
     $permalink = '';
-    if ($term_id) {
+
+    // If we have a post ID (Pods CPT relationship), use get_permalink
+    if ($post_id) {
+        $permalink = get_permalink($post_id);
+    }
+    // If we have a term ID (WordPress taxonomy), use get_term_link
+    elseif ($term_id) {
         $permalink = get_term_link($term_id, $taxonomy);
         if (is_wp_error($permalink)) {
             $permalink = '';
         }
-    } else {
-        // Try to find the term by name
-        $found_term = get_term_by('name', $name, $taxonomy);
-        if ($found_term && !is_wp_error($found_term)) {
-            $permalink = get_term_link($found_term, $taxonomy);
-            if (is_wp_error($permalink)) {
-                $permalink = '';
+    }
+    // Fallback: try to find the post by title in the CPT
+    else {
+        // First try as a Pods CPT
+        $found_post = get_page_by_title($name, OBJECT, $taxonomy);
+        if ($found_post) {
+            $permalink = get_permalink($found_post->ID);
+        } else {
+            // Fallback to taxonomy term lookup
+            $found_term = get_term_by('name', $name, $taxonomy);
+            if ($found_term && !is_wp_error($found_term)) {
+                $permalink = get_term_link($found_term, $taxonomy);
+                if (is_wp_error($permalink)) {
+                    $permalink = '';
+                }
             }
         }
     }
@@ -371,6 +427,57 @@ function fml_search_songs(WP_REST_Request $request) {
             'total_pages' => ceil($songs->total_found() / $per_page)
         ]
     ]);
+}
+
+/**
+ * Get license modal content (add-to-cart HTML) for a song
+ * Returns the add-to-cart shortcode content for use in the player modal
+ */
+function fml_get_license_modal_content(WP_REST_Request $request) {
+    $song_id = intval($request->get_param('id'));
+
+    // Verify song exists
+    $song_pod = pods('song', $song_id);
+    if (!$song_pod || !$song_pod->exists()) {
+        return new WP_REST_Response([
+            'success' => false,
+            'error' => 'Song not found'
+        ], 404);
+    }
+
+    // Generate the add-to-cart shortcode content
+    $html = '';
+
+    // Check if the shortcode function exists
+    if (function_exists('fml_add_to_cart_shortcode')) {
+        $html = fml_add_to_cart_shortcode([
+            'song_id' => $song_id,
+            'show_options' => 'true',
+            'button_text' => 'Add to Cart'
+        ]);
+
+        // Remove the data-nonce attribute from the shortcode output
+        // The nonce from the REST API context won't be valid for the user's session
+        // The modal has its own valid nonce that will be used instead
+        $html = preg_replace('/\s*data-nonce="[^"]*"/', '', $html);
+
+        // Add a link to view the full song page
+        $permalink = get_permalink($song_id);
+        if ($permalink) {
+            $html .= '<div class="fml-license-modal-link" style="margin-top: 16px; text-align: center;">';
+            $html .= '<a href="' . esc_url($permalink) . '" style="color: #a0aec0; font-size: 0.9rem; text-decoration: none;">';
+            $html .= '<i class="fas fa-external-link-alt" style="margin-right: 6px;"></i>View full song page';
+            $html .= '</a>';
+            $html .= '</div>';
+        }
+    } else {
+        $html = '<p style="color: #fc8181;">Licensing options unavailable.</p>';
+    }
+
+    return new WP_REST_Response([
+        'success' => true,
+        'html' => $html
+    ], 200);
 }
 
 /**

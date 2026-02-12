@@ -65,7 +65,7 @@ if ($_SERVER["REQUEST_METHOD"]==="OPTIONS") {
 header("Content-Type: application/json; charset=utf-8");
 
 /* AMAZON WEB SERVICES CONFIGURATION */
-require get_stylesheet_directory()."/php/aws/aws-autoloader.php";
+require_once get_stylesheet_directory()."/php/aws/aws-autoloader.php";
 
 // Establish connection with DreamObjects with an S3 client.
 // Credentials are loaded from wp-config.php constants

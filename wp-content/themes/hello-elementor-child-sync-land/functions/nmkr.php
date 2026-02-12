@@ -123,6 +123,144 @@ function fml_nmkr_is_configured() {
 }
 
 /**
+ * Get NMKR Mint Coupon Balance
+ * Mint coupons are required for manual minting via API
+ */
+function fml_get_nmkr_mint_coupon_balance() {
+    $api_key = fml_get_nmkr_api_key();
+    $api_url = fml_get_nmkr_api_url();
+
+    if (empty($api_key)) {
+        return ['success' => false, 'error' => 'API key not configured'];
+    }
+
+    $response = wp_remote_get($api_url . '/v2/GetMintCouponBalance', [
+        'headers' => [
+            'Authorization' => 'Bearer ' . $api_key,
+            'Accept' => 'application/json'
+        ],
+        'timeout' => 15
+    ]);
+
+    if (is_wp_error($response)) {
+        return ['success' => false, 'error' => $response->get_error_message()];
+    }
+
+    $http_code = wp_remote_retrieve_response_code($response);
+    $body = json_decode(wp_remote_retrieve_body($response), true);
+
+    if ($http_code !== 200) {
+        return ['success' => false, 'error' => "HTTP {$http_code}", 'response' => $body];
+    }
+
+    // Response should contain the balance
+    return [
+        'success' => true,
+        'balance' => $body['mintCoupons'] ?? $body['balance'] ?? $body,
+        'raw' => $body
+    ];
+}
+
+/**
+ * Get NMKR Project Details
+ * Returns project info including policy lock date, NFT counts, etc.
+ */
+function fml_get_nmkr_project_details() {
+    $api_key = fml_get_nmkr_api_key();
+    $api_url = fml_get_nmkr_api_url();
+    $project_uid = fml_get_nmkr_project_uid();
+
+    if (empty($api_key) || empty($project_uid)) {
+        return ['success' => false, 'error' => 'NMKR not configured'];
+    }
+
+    $response = wp_remote_get($api_url . '/v2/ProjectDetails/' . $project_uid, [
+        'headers' => [
+            'Authorization' => 'Bearer ' . $api_key,
+            'Accept' => 'application/json'
+        ],
+        'timeout' => 15
+    ]);
+
+    if (is_wp_error($response)) {
+        return ['success' => false, 'error' => $response->get_error_message()];
+    }
+
+    $http_code = wp_remote_retrieve_response_code($response);
+    $body = json_decode(wp_remote_retrieve_body($response), true);
+
+    if ($http_code !== 200) {
+        // If 404, try to list projects to help debug
+        if ($http_code === 404) {
+            return [
+                'success' => false,
+                'error' => "Project not found (UID: {$project_uid})",
+                'configured_uid' => $project_uid
+            ];
+        }
+        return ['success' => false, 'error' => "HTTP {$http_code}", 'response' => $body];
+    }
+
+    // Check if policy is locked
+    $policy_locked = false;
+    $policy_lock_date = null;
+    if (!empty($body['policyExpires'])) {
+        $policy_lock_date = $body['policyExpires'];
+        $lock_time = strtotime($policy_lock_date);
+        if ($lock_time && $lock_time < time()) {
+            $policy_locked = true;
+        }
+    }
+
+    return [
+        'success' => true,
+        'project_name' => $body['projectname'] ?? 'Unknown',
+        'policy_id' => $body['policyId'] ?? '',
+        'policy_locked' => $policy_locked,
+        'policy_lock_date' => $policy_lock_date,
+        'nft_counts' => $body['nftCounts'] ?? [],
+        'address' => $body['address'] ?? '',
+        'raw' => $body
+    ];
+}
+
+/**
+ * List all NMKR projects for this account
+ */
+function fml_list_nmkr_projects() {
+    $api_key = fml_get_nmkr_api_key();
+    $api_url = fml_get_nmkr_api_url();
+
+    if (empty($api_key)) {
+        return ['success' => false, 'error' => 'API key not configured'];
+    }
+
+    $response = wp_remote_get($api_url . '/v2/ListProjects/50/1', [
+        'headers' => [
+            'Authorization' => 'Bearer ' . $api_key,
+            'Accept' => 'application/json'
+        ],
+        'timeout' => 15
+    ]);
+
+    if (is_wp_error($response)) {
+        return ['success' => false, 'error' => $response->get_error_message()];
+    }
+
+    $http_code = wp_remote_retrieve_response_code($response);
+    $body = json_decode(wp_remote_retrieve_body($response), true);
+
+    if ($http_code !== 200) {
+        return ['success' => false, 'error' => "HTTP {$http_code}", 'response' => $body];
+    }
+
+    return [
+        'success' => true,
+        'projects' => $body
+    ];
+}
+
+/**
  * Get NMKR credentials safely (updated to use new helper functions)
  */
 function fml_get_nmkr_credentials() {
@@ -295,6 +433,57 @@ function fml_ajax_verify_nmkr_connection() {
         }
         wp_send_json_error(['message' => $error_msg]);
     }
+}
+
+/**
+ * AJAX handler for loading NMKR projects list
+ */
+add_action('wp_ajax_fml_load_nmkr_projects', 'fml_ajax_load_nmkr_projects');
+
+function fml_ajax_load_nmkr_projects() {
+    check_ajax_referer('fml_licensing_settings', 'nonce');
+
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(['error' => 'Unauthorized']);
+    }
+
+    $env = sanitize_text_field($_POST['env'] ?? 'preprod');
+    $api_key = sanitize_text_field($_POST['api_key'] ?? '');
+
+    if (empty($api_key)) {
+        wp_send_json_error(['error' => 'No API key provided']);
+    }
+
+    // Determine API URL based on environment
+    $api_url = ($env === 'mainnet')
+        ? 'https://studio-api.nmkr.io'
+        : 'https://studio-api.preprod.nmkr.io';
+
+    // Call ListProjects endpoint
+    $response = wp_remote_get($api_url . '/v2/ListProjects/50/1', [
+        'headers' => [
+            'Authorization' => 'Bearer ' . $api_key,
+            'Accept' => 'application/json'
+        ],
+        'timeout' => 15
+    ]);
+
+    if (is_wp_error($response)) {
+        wp_send_json_error(['error' => $response->get_error_message()]);
+    }
+
+    $http_code = wp_remote_retrieve_response_code($response);
+    $body = json_decode(wp_remote_retrieve_body($response), true);
+
+    if ($http_code !== 200) {
+        wp_send_json_error(['error' => "HTTP {$http_code}: " . (is_array($body) ? json_encode($body) : $body)]);
+    }
+
+    if (empty($body) || !is_array($body)) {
+        wp_send_json_error(['error' => 'No projects found in your NMKR account']);
+    }
+
+    wp_send_json_success(['projects' => $body]);
 }
 
 /**
@@ -859,6 +1048,47 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
     error_log("NMKR Mode: " . $creds['mode']);
     error_log("NMKR API URL: " . $creds['api_url']);
 
+    // Check project status and policy lock
+    $project_details = fml_get_nmkr_project_details();
+    if ($project_details['success']) {
+        error_log("NMKR Project: " . $project_details['project_name']);
+        if ($project_details['policy_locked']) {
+            error_log("NFT mint failed: Policy is LOCKED (expired: " . $project_details['policy_lock_date'] . ")");
+            return [
+                'success' => false,
+                'error' => 'NMKR policy is locked (expired ' . $project_details['policy_lock_date'] . '). Create a new project with an open policy.'
+            ];
+        }
+        if ($project_details['policy_lock_date']) {
+            error_log("Policy lock date: " . $project_details['policy_lock_date']);
+        }
+    } else {
+        error_log("Warning: Could not check project details: " . ($project_details['error'] ?? 'unknown error'));
+    }
+
+    // Check mint coupon balance before attempting to mint
+    $coupon_balance = fml_get_nmkr_mint_coupon_balance();
+    if ($coupon_balance['success']) {
+        // Extract balance from NMKR response (mintCouponBalanceCardano field)
+        $raw = $coupon_balance['raw'] ?? $coupon_balance['balance'];
+        if (is_array($raw)) {
+            $balance = $raw['mintCouponBalanceCardano'] ?? $raw['mintCoupons'] ?? $raw['balance'] ?? 0;
+        } else {
+            $balance = is_numeric($raw) ? $raw : 0;
+        }
+        error_log("NMKR Mint Coupon Balance: " . $balance);
+        if ($balance < 1) {
+            error_log("NFT mint failed: No mint coupons available. Balance: " . $balance);
+            return [
+                'success' => false,
+                'error' => 'No mint coupons available in NMKR account. Please purchase mint coupons at https://studio' . ($creds['mode'] === 'preprod' ? '.preprod' : '') . '.nmkr.io'
+            ];
+        }
+    } else {
+        error_log("Warning: Could not check mint coupon balance: " . ($coupon_balance['error'] ?? 'unknown error'));
+        // Continue anyway - the mint will fail if no coupons, but we'll get a more specific error
+    }
+
     // Get license data - handle arrays from Pods
     $license_url = fml_get_pod_value($license_pod, 'license_url');
 
@@ -1150,7 +1380,7 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
     }
     error_log("Token Name: {$token_name}");
     error_log("Display Name: {$display_name}");
-    error_log("Metadata Override: " . json_encode($nft_metadata, JSON_PRETTY_PRINT));
+    error_log("Metadata Placeholder: " . json_encode($upload_data['metadataPlaceholder'] ?? [], JSON_PRETTY_PRINT));
     error_log("API URL: {$upload_url}");
 
     // Upload the NFT
@@ -1300,43 +1530,94 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
     error_log("NMKR Mint Response: " . json_encode($mint_body));
 
     if ($mint_http_code == 200 || $mint_http_code == 201) {
-        // Check if IPFS upload failed
-        $ipfs_failed = empty($ipfs_hash);
+        // IMPORTANT: Check if NMKR actually minted the NFT or just reserved it
+        // NMKR returns 200 OK even when just reserving - we need to check the response
+        $nft_actually_minted = false;
+        $nft_state = 'unknown';
+        $tx_hash = null;
 
-        if ($ipfs_failed) {
-            // IPFS upload failed - mark as 'ipfs_pending' so user can still access license
-            // but knows NFT needs retry. Don't mark as fully 'failed'.
-            error_log("=== NFT Mint submitted but IPFS upload failed - marking as ipfs_pending ===");
-            error_log("License is still usable. NFT minting can be retried.");
+        if (isset($mint_body['sendedNft']) && is_array($mint_body['sendedNft']) && !empty($mint_body['sendedNft'])) {
+            $sent_nft = $mint_body['sendedNft'][0];
+            $nft_actually_minted = isset($sent_nft['minted']) && $sent_nft['minted'] === true;
+            $nft_state = $sent_nft['state'] ?? 'unknown';
+            $tx_hash = $sent_nft['initialMintTxHash'] ?? $mint_body['txHash'] ?? $mint_body['transactionId'] ?? null;
+
+            error_log("NMKR Response Analysis - minted: " . ($nft_actually_minted ? 'true' : 'false') . ", state: {$nft_state}");
+        }
+
+        // If NFT was reserved but not minted, mark as processing/pending
+        if (!$nft_actually_minted && in_array($nft_state, ['reserved', 'pending', 'soldalienpending', 'unknown'])) {
+            error_log("=== NFT Reserved but not minted yet - state: {$nft_state} ===");
+            error_log("NFT will be minted asynchronously by NMKR. Status set to 'processing'.");
 
             $license_pod->save([
-                'nft_status' => 'ipfs_pending',  // New status: license works, NFT needs IPFS retry
+                'nft_status' => 'processing',  // Minting in progress at NMKR
                 'nft_asset_id' => $nft_uid,
-                'nft_transaction_hash' => $mint_body['txHash'] ?? $mint_body['transactionId'] ?? '',
+                'nft_transaction_hash' => '',  // No TX hash yet
+                'nft_policy_id' => $creds['policy_id'],
+                'nft_asset_name' => $token_name,
+                'wallet_address' => $wallet_address,
+                'nft_ipfs_hash' => $ipfs_hash
+            ]);
+
+            // Update queue to processing (not completed yet)
+            if (function_exists('fml_update_nft_queue_item')) {
+                fml_update_nft_queue_item($license_id, 'processing', "NMKR state: {$nft_state} - awaiting blockchain confirmation");
+            }
+
+            // Log to monitoring
+            if (function_exists('fml_log_event')) {
+                fml_log_event('nft', "License #{$license_id} - NFT reserved, awaiting mint", [
+                    'nft_uid' => $nft_uid,
+                    'nmkr_state' => $nft_state,
+                    'minted' => $nft_actually_minted
+                ], 'info');
+            }
+
+            return [
+                'success' => true,
+                'partial' => true,
+                'message' => 'NFT reserved and queued for minting. Awaiting blockchain confirmation.',
+                'data' => [
+                    'nft_uid' => $nft_uid,
+                    'license_id' => $license_id,
+                    'nft_status' => 'processing',
+                    'nmkr_state' => $nft_state
+                ]
+            ];
+        }
+
+        // Check if IPFS upload failed (but NFT was minted)
+        $ipfs_failed = empty($ipfs_hash);
+
+        if ($ipfs_failed && $nft_actually_minted) {
+            // IPFS upload failed but NFT was minted
+            error_log("=== NFT Minted but IPFS upload failed - marking as ipfs_pending ===");
+
+            $license_pod->save([
+                'nft_status' => 'ipfs_pending',
+                'nft_asset_id' => $nft_uid,
+                'nft_transaction_hash' => $tx_hash ?? '',
                 'nft_policy_id' => $creds['policy_id'],
                 'nft_asset_name' => $token_name,
                 'wallet_address' => $wallet_address
             ]);
 
-            // Update queue to ipfs_pending (not failed - allows retry)
             if (function_exists('fml_update_nft_queue_item')) {
                 fml_update_nft_queue_item($license_id, 'ipfs_pending', 'IPFS upload failed - will retry');
             }
 
-            // Log to monitoring
             if (function_exists('fml_log_event')) {
-                fml_log_event('nft', "License #{$license_id} - NFT submitted, IPFS pending retry", [
+                fml_log_event('nft', "License #{$license_id} - NFT minted, IPFS pending", [
                     'nft_uid' => $nft_uid,
-                    'tx_hash' => $mint_body['txHash'] ?? $mint_body['transactionId'] ?? 'pending',
-                    'reason' => 'IPFS upload failed, will retry'
+                    'tx_hash' => $tx_hash ?? 'pending'
                 ], 'warning');
             }
 
-            // Return partial success - license is usable, NFT is pending
             return [
                 'success' => true,
                 'partial' => true,
-                'message' => 'License created successfully. NFT minting in progress - IPFS upload will retry automatically.',
+                'message' => 'NFT minted successfully. IPFS upload will retry automatically.',
                 'data' => [
                     'nft_uid' => $nft_uid,
                     'license_id' => $license_id,
@@ -1345,11 +1626,11 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
             ];
         }
 
-        // IPFS succeeded - mark as properly minted
+        // NFT was actually minted on the blockchain
         $license_pod->save([
             'nft_status' => 'minted',
             'nft_asset_id' => $nft_uid,
-            'nft_transaction_hash' => $mint_body['txHash'] ?? $mint_body['transactionId'] ?? '',
+            'nft_transaction_hash' => $tx_hash ?? '',
             'nft_minted_at' => current_time('mysql'),
             'nft_ipfs_hash' => $ipfs_hash,
             'nft_policy_id' => $creds['policy_id'],
@@ -1364,15 +1645,17 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
 
         error_log("=== NFT Minted Successfully! ===");
         error_log("NFT UID: {$nft_uid}");
-        error_log("TX Hash: " . ($mint_body['txHash'] ?? $mint_body['transactionId'] ?? 'pending'));
+        error_log("TX Hash: " . ($tx_hash ?? 'pending'));
         error_log("IPFS Hash: {$ipfs_hash}");
+        error_log("NMKR State: {$nft_state}");
 
         // Log success to monitoring
         if (function_exists('fml_log_event')) {
             fml_log_event('nft', "License #{$license_id} NFT minted successfully", [
                 'nft_uid' => $nft_uid,
-                'tx_hash' => $mint_body['txHash'] ?? $mint_body['transactionId'] ?? 'pending',
-                'ipfs_hash' => $ipfs_hash
+                'tx_hash' => $tx_hash ?? 'pending',
+                'ipfs_hash' => $ipfs_hash,
+                'nmkr_state' => $nft_state
             ], 'success');
         }
 
@@ -1381,7 +1664,7 @@ function fml_mint_license_nft_with_ipfs($license_id, $wallet_address = '') {
             'message' => 'License NFT minted successfully',
             'data' => [
                 'nft_uid' => $nft_uid,
-                'transaction_hash' => $mint_body['txHash'] ?? $mint_body['transactionId'] ?? null,
+                'transaction_hash' => $tx_hash,
                 'token_name' => $token_name,
                 'license_id' => $license_id,
                 'ipfs_hash' => $ipfs_hash,
@@ -1729,4 +2012,304 @@ function fml_admin_retry_all_ipfs_pending() {
 
     fml_process_ipfs_pending_licenses();
     wp_send_json_success(['message' => 'IPFS retry process triggered']);
+}
+
+
+/**
+ * ============================================================================
+ * NFT STATUS POLLING - Check NMKR for processing NFTs
+ * ============================================================================
+ */
+
+/**
+ * Schedule NFT status polling cron job
+ */
+add_action('init', function() {
+    if (!wp_next_scheduled('fml_poll_processing_nfts')) {
+        wp_schedule_event(time(), 'every_5_minutes', 'fml_poll_processing_nfts');
+    }
+});
+
+// Add custom cron schedule for every 5 minutes
+add_filter('cron_schedules', function($schedules) {
+    if (!isset($schedules['every_5_minutes'])) {
+        $schedules['every_5_minutes'] = [
+            'interval' => 300, // 5 minutes
+            'display' => 'Every 5 Minutes'
+        ];
+    }
+    return $schedules;
+});
+
+/**
+ * Poll NMKR for NFT status updates
+ */
+add_action('fml_poll_processing_nfts', 'fml_check_processing_nfts');
+
+function fml_check_processing_nfts() {
+    error_log("=== Polling NMKR for processing NFT status ===");
+
+    // Get NMKR credentials
+    $creds = fml_get_nmkr_credentials();
+    if (!$creds['success']) {
+        error_log("NFT polling: No NMKR credentials configured");
+        return;
+    }
+
+    // Find licenses with 'processing' status
+    $args = [
+        'post_type' => 'license',
+        'post_status' => 'publish',
+        'posts_per_page' => 10,
+        'meta_query' => [
+            [
+                'key' => 'nft_status',
+                'value' => 'processing',
+                'compare' => '='
+            ]
+        ]
+    ];
+
+    $query = new WP_Query($args);
+    $processed = 0;
+
+    if ($query->have_posts()) {
+        while ($query->have_posts()) {
+            $query->the_post();
+            $license_id = get_the_ID();
+
+            $license_pod = pods('license', $license_id);
+            if (!$license_pod || !$license_pod->exists()) continue;
+
+            $nft_uid = fml_get_pod_value($license_pod, 'nft_asset_id');
+            if (empty($nft_uid)) {
+                error_log("NFT polling: License #{$license_id} has no nft_asset_id, skipping");
+                continue;
+            }
+
+            // Poll NMKR for this NFT's status
+            $result = fml_poll_nft_status($license_id, $nft_uid, $creds);
+            if ($result['updated']) {
+                $processed++;
+            }
+        }
+    }
+
+    wp_reset_postdata();
+
+    error_log("=== NFT polling complete: {$processed} licenses updated ===");
+}
+
+/**
+ * Poll NMKR for a specific NFT's status
+ *
+ * Note: GetNftDetails returns 404 for NFTs in "reserved" state.
+ * We need to check the sold/reserved NFTs list instead, or use GetNftDetailsByTokenname.
+ */
+function fml_poll_nft_status($license_id, $nft_uid, $creds) {
+    error_log("Polling NMKR for NFT: {$nft_uid} (License #{$license_id})");
+
+    // Get the token name from the license to use as fallback
+    $license_pod = pods('license', $license_id);
+    $token_name = '';
+    if ($license_pod && $license_pod->exists()) {
+        $token_name = fml_get_pod_value($license_pod, 'nft_asset_name');
+    }
+
+    // First try GetNftDetails - works for minted NFTs
+    $api_url = $creds['api_url'] . '/v2/GetNftDetails/' . $creds['project_uid'] . '/' . $nft_uid;
+
+    $response = wp_remote_get($api_url, [
+        'headers' => [
+            'Authorization' => 'Bearer ' . $creds['api_key'],
+            'Accept' => 'application/json'
+        ],
+        'timeout' => 30
+    ]);
+
+    $http_code = wp_remote_retrieve_response_code($response);
+    $body = json_decode(wp_remote_retrieve_body($response), true);
+
+    // If 404, the NFT might still be in "reserved" state (not yet minted)
+    // Try checking by token name instead
+    if ($http_code === 404 && !empty($token_name)) {
+        error_log("GetNftDetails returned 404, trying GetNftDetailsByTokenname for: {$token_name}");
+
+        $alt_url = $creds['api_url'] . '/v2/GetNftDetailsByTokenname/' . $creds['project_uid'] . '/' . urlencode($token_name);
+        $alt_response = wp_remote_get($alt_url, [
+            'headers' => [
+                'Authorization' => 'Bearer ' . $creds['api_key'],
+                'Accept' => 'application/json'
+            ],
+            'timeout' => 30
+        ]);
+
+        $alt_http_code = wp_remote_retrieve_response_code($alt_response);
+        $alt_body = json_decode(wp_remote_retrieve_body($alt_response), true);
+
+        if ($alt_http_code === 200 && !empty($alt_body)) {
+            error_log("GetNftDetailsByTokenname succeeded");
+            $http_code = $alt_http_code;
+            $body = $alt_body;
+        } else {
+            error_log("GetNftDetailsByTokenname also failed: HTTP {$alt_http_code}");
+
+            // NFT is likely still pending in NMKR's queue
+            // Check the reserved count to see if there are pending NFTs
+            $counts_url = $creds['api_url'] . '/v2/GetCounts/' . $creds['project_uid'];
+            $counts_response = wp_remote_get($counts_url, [
+                'headers' => [
+                    'Authorization' => 'Bearer ' . $creds['api_key'],
+                    'Accept' => 'application/json'
+                ],
+                'timeout' => 15
+            ]);
+            $counts_body = json_decode(wp_remote_retrieve_body($counts_response), true);
+
+            if (!empty($counts_body['nftCounts']['reserved']) && $counts_body['nftCounts']['reserved'] > 0) {
+                error_log("Project has {$counts_body['nftCounts']['reserved']} reserved NFTs - this NFT is likely still pending");
+                return ['updated' => false, 'status' => 'pending_in_queue', 'reserved_count' => $counts_body['nftCounts']['reserved']];
+            }
+
+            // If no reserved NFTs, mark as potential issue
+            error_log("NFT not found and no reserved NFTs in project - marking for investigation");
+            return ['updated' => false, 'error' => 'NFT not found in NMKR', 'needs_investigation' => true];
+        }
+    }
+
+    if (is_wp_error($response)) {
+        error_log("NFT polling error for #{$license_id}: " . $response->get_error_message());
+        return ['updated' => false, 'error' => $response->get_error_message()];
+    }
+
+    error_log("NMKR NFT Details Response (#{$license_id}): HTTP {$http_code}");
+    error_log("NMKR NFT State: " . json_encode([
+        'state' => $body['state'] ?? 'unknown',
+        'minted' => $body['minted'] ?? false,
+        'blocked' => $body['blocked'] ?? false,
+        'error' => $body['error'] ?? $body['errorMessage'] ?? $body['blockedReason'] ?? null
+    ]));
+
+    if ($http_code !== 200) {
+        error_log("NFT polling: Non-200 response for #{$license_id}");
+        return ['updated' => false, 'error' => "HTTP {$http_code}"];
+    }
+
+    $license_pod = pods('license', $license_id);
+    $nft_state = $body['state'] ?? 'unknown';
+    $is_minted = isset($body['minted']) && $body['minted'] === true;
+    $is_blocked = isset($body['blocked']) && $body['blocked'] === true;
+    $is_error = !empty($body['error']) || !empty($body['errorMessage']);
+    $tx_hash = $body['initialMintTxHash'] ?? $body['transactionHash'] ?? null;
+    $asset_id = $body['assetId'] ?? null;
+    $fingerprint = $body['fingerprint'] ?? null;
+
+    // Check if NFT was successfully minted
+    if ($is_minted && $nft_state === 'sold') {
+        error_log("NFT #{$nft_uid} is now MINTED! Updating license #{$license_id}");
+
+        $license_pod->save([
+            'nft_status' => 'minted',
+            'nft_transaction_hash' => $tx_hash ?? '',
+            'nft_minted_at' => current_time('mysql')
+        ]);
+
+        if (function_exists('fml_update_nft_queue_item')) {
+            fml_update_nft_queue_item($license_id, 'completed');
+        }
+
+        if (function_exists('fml_log_event')) {
+            fml_log_event('nft', "License #{$license_id} NFT confirmed minted via polling", [
+                'nft_uid' => $nft_uid,
+                'tx_hash' => $tx_hash,
+                'asset_id' => $asset_id
+            ], 'success');
+        }
+
+        return ['updated' => true, 'status' => 'minted'];
+    }
+
+    // Check if NFT is blocked or errored
+    if ($is_blocked || $is_error) {
+        $error_msg = $body['error'] ?? $body['errorMessage'] ?? $body['blockedReason'] ?? 'Unknown NMKR error';
+        error_log("NFT #{$nft_uid} has ERROR/BLOCKED: {$error_msg}");
+
+        $license_pod->save([
+            'nft_status' => 'failed'
+        ]);
+
+        if (function_exists('fml_update_nft_queue_item')) {
+            fml_update_nft_queue_item($license_id, 'failed', "NMKR: {$error_msg}");
+        }
+
+        if (function_exists('fml_log_event')) {
+            fml_log_event('nft', "License #{$license_id} NFT minting failed", [
+                'nft_uid' => $nft_uid,
+                'error' => $error_msg,
+                'state' => $nft_state
+            ], 'error');
+        }
+
+        return ['updated' => true, 'status' => 'failed', 'error' => $error_msg];
+    }
+
+    // Still processing - check if it's been too long
+    $license_updated = get_post_modified_time('U', true, $license_id);
+    $time_since_update = time() - $license_updated;
+    $hours_elapsed = round($time_since_update / 3600, 2);
+
+    // After 24 hours, auto-fail the NFT (NMKR should have processed it by now)
+    if ($time_since_update > 86400) { // 24 hours
+        error_log("NFT #{$nft_uid} has been processing for {$hours_elapsed} hours - auto-failing");
+
+        $license_pod->save([
+            'nft_status' => 'failed'
+        ]);
+
+        if (function_exists('fml_update_nft_queue_item')) {
+            fml_update_nft_queue_item($license_id, 'failed', "Timeout: NFT did not mint within 24 hours");
+        }
+
+        if (function_exists('fml_log_event')) {
+            fml_log_event('nft', "License #{$license_id} NFT auto-failed after 24 hour timeout", [
+                'nft_uid' => $nft_uid,
+                'state' => $nft_state,
+                'hours_elapsed' => $hours_elapsed
+            ], 'error');
+        }
+
+        return ['updated' => true, 'status' => 'failed', 'error' => 'Timeout after 24 hours'];
+    }
+
+    // After 1 hour, log a warning but don't fail yet
+    if ($time_since_update > 3600) { // More than 1 hour
+        error_log("NFT #{$nft_uid} has been processing for {$hours_elapsed} hours - still waiting");
+
+        if (function_exists('fml_log_event')) {
+            fml_log_event('nft', "License #{$license_id} NFT processing delayed", [
+                'nft_uid' => $nft_uid,
+                'state' => $nft_state,
+                'hours_elapsed' => $hours_elapsed
+            ], 'warning');
+        }
+    }
+
+    // Still processing, no update needed
+    error_log("NFT #{$nft_uid} still processing (state: {$nft_state}, elapsed: {$hours_elapsed}h)");
+    return ['updated' => false, 'status' => 'processing', 'state' => $nft_state, 'hours_elapsed' => $hours_elapsed];
+}
+
+/**
+ * Manually poll all processing NFTs (for admin use)
+ */
+add_action('wp_ajax_fml_poll_nft_status', 'fml_admin_poll_nft_status');
+
+function fml_admin_poll_nft_status() {
+    if (!current_user_can('manage_options')) {
+        wp_send_json_error(['message' => 'Unauthorized']);
+        return;
+    }
+
+    fml_check_processing_nfts();
+    wp_send_json_success(['message' => 'NFT status polling triggered']);
 }
